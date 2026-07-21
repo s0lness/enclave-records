@@ -11,7 +11,7 @@ snap() { curl -s "http://127.0.0.1:$1/screenshot" -o "$OUT/$2.png"; }
 snap 5001 "01-a-home"
 snap 5002 "02-b-home"
 
-python3 relay/demo_steps.py cut "Nuits Roses" 5 > "$OUT/out-cut.txt" 2>&1 &
+python3 relay/demo_steps.py cut "Random Access Memories" 5 > "$OUT/out-cut.txt" 2>&1 &
 PID=$!
 sleep 2.5
 snap 5001 "03-a-cut-review"

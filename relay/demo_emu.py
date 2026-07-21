@@ -95,7 +95,7 @@ def gated_both(pa, pb, ins, button_text, wait_text, prompt):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--auto", action="store_true", help="tap the screens automatically")
-    parser.add_argument("--title", default="Nuits Roses")
+    parser.add_argument("--title", default="Random Access Memories")
     parser.add_argument("--edition", type=int, default=5)
     args = parser.parse_args()
 

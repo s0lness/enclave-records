@@ -121,7 +121,7 @@ def main():
         b = Presse(LiveDevice("flex-b", 5002))
 
     if step == "cut":
-        title = sys.argv[2] if len(sys.argv) > 2 else "Nuits Roses"
+        title = sys.argv[2] if len(sys.argv) > 2 else "Random Access Memories"
         edition = int(sys.argv[3]) if len(sys.argv) > 3 else 5
         data = struct.pack("<H", edition) + title.encode()
         body, sw = gated(a, INS_CUT, data, "Cut master", "Flex A")

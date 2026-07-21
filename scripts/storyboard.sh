@@ -10,7 +10,7 @@ snap() { curl -s "http://127.0.0.1:$1/screenshot" -o "$OUT/$2.png"; }
 
 snap 5001 "01-home-a"
 
-python3 relay/demo_steps.py cut "Nuits Roses" 5 &
+python3 relay/demo_steps.py cut "Random Access Memories" 5 &
 CUT_PID=$!
 sleep 2
 snap 5001 "02-cut-review-a"

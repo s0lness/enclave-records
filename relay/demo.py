@@ -66,11 +66,23 @@ def gated_both(pa, pb, ins):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify", action="store_true", help="offline verification only")
-    parser.add_argument("--title", default="Nuits Roses")
+    parser.add_argument("--collection", choices=["a", "b"],
+                        help="browse the collection on device a or b (tap Back to leave)")
+    parser.add_argument("--title", default="Random Access Memories")
     parser.add_argument("--edition", type=int, default=5)
     args = parser.parse_args()
 
     paths = enumerate_ledgers()
+    if args.collection:
+        idx = 0 if args.collection == "a" else 1
+        if len(paths) <= idx:
+            sys.exit(f"device {args.collection} not found")
+        dev = HardwarePresse(HidDevice(f"Flex {args.collection.upper()}", paths[idx]))
+        print(f">> browse the collection on Flex {args.collection.upper()}; tap Back to leave")
+        _, sw = split_sw(dev.dev.apdu(apdu_hex(0x02)))
+        print("closed." if sw == SW_OK else f"refused ({sw})")
+        return
+
     if args.verify:
         if len(paths) < 1:
             sys.exit("no Ledger device found")

@@ -1,4 +1,4 @@
-Flex A shows: kiwi / cinema / meadow / pepper
-Flex B shows: kiwi / cinema / meadow / pepper
+Flex A shows: sardine / kiwi / hexagon / eclipse
+Flex B shows: sardine / kiwi / hexagon / eclipse
 >> compare, then tap 'Words match' on BOTH pages
 channel authenticated.

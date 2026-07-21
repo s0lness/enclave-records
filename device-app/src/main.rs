@@ -165,6 +165,9 @@ extern "C" fn sample_main(_arg0: u32) {
         );
         if ui_gated {
             let _ = status;
+            // Ceremonies change what the device holds; rebuild the home so
+            // the idle screen always tells the current story.
+            home = ui_menu_main(comm);
             home.show_and_return();
         }
     }
