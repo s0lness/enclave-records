@@ -1,4 +1,4 @@
-Flex A shows: reindeer / plaza / sonnet / breeze
-Flex B shows: reindeer / plaza / sonnet / breeze
+Flex A shows: riddle / unicorn / drumbeat / sprout
+Flex B shows: riddle / unicorn / drumbeat / sprout
 >> compare, then tap 'Words match' on BOTH pages
 channel authenticated.
