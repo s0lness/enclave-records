@@ -91,24 +91,24 @@ const BAYER4: [[u8; 4]; 4] = [
     [15, 7, 13, 5],
 ];
 
-/// A 3x5 pixel font for the record number: digits and the leading '#'. Each
-/// glyph is five rows of three bits, MSB = leftmost column. Scaled up at draw
-/// time; a baked-in font keeps the number strictly 1-bit and needs no NBGL
-/// text-over-image trick (which the raw object path cannot do without faulting).
-fn glyph_3x5(ch: u8) -> [u8; 5] {
-    match ch {
-        b'0' => [0b111, 0b101, 0b101, 0b101, 0b111],
-        b'1' => [0b010, 0b110, 0b010, 0b010, 0b111],
-        b'2' => [0b111, 0b001, 0b111, 0b100, 0b111],
-        b'3' => [0b111, 0b001, 0b111, 0b001, 0b111],
-        b'4' => [0b101, 0b101, 0b111, 0b001, 0b001],
-        b'5' => [0b111, 0b100, 0b111, 0b001, 0b111],
-        b'6' => [0b111, 0b100, 0b111, 0b101, 0b111],
-        b'7' => [0b111, 0b001, 0b010, 0b010, 0b010],
-        b'8' => [0b111, 0b101, 0b111, 0b101, 0b111],
-        b'9' => [0b111, 0b101, 0b111, 0b001, 0b111],
-        b'#' => [0b101, 0b111, 0b101, 0b111, 0b101],
-        _ => [0; 5],
+/// A 5x7 bitmap font for the record number's digits: five bits per row (bit 4 =
+/// leftmost column), seven rows top to bottom. These are proper numeral shapes
+/// (the `1` has a flag and a base, so it never reads as a bare bar or an `l`);
+/// no `#` is drawn, since a legible hash is not achievable at this size and a
+/// large numeral reads as the edition number on its own.
+fn digit_5x7(d: u8) -> [u8; 7] {
+    match d {
+        0 => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+        1 => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        2 => [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+        3 => [0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110],
+        4 => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+        5 => [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+        6 => [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+        7 => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+        8 => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+        9 => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+        _ => [0; 7],
     }
 }
 
@@ -156,51 +156,45 @@ fn cover_black(src: &Cover, n: usize, x: usize, y: usize) -> bool {
     !white
 }
 
-/// Draw the number ("#N") into the left column of the card, vertically centred
-/// against the cover, black on white.
+/// Draw the edition number (the numeral alone, no ambiguous '#') into the left
+/// column of the card from the 5x7 font, each cell scaled to a solid block,
+/// vertically centred against the cover. The cell scale shrinks as the digit
+/// count grows so the number always stays inside the column.
 fn draw_number(buf: &mut [u8], w: usize, h: usize, col_w: usize, cover_h: usize, number: u16) {
-    let mut chars = [0u8; 5];
-    let mut n = 0usize;
-    chars[n] = b'#';
-    n += 1;
     let mut digits = [0u8; 3];
-    let mut d = 0usize;
+    let mut nd = 0usize;
     let mut v = number;
     if v == 0 {
-        digits[d] = b'0';
-        d += 1;
+        digits[0] = 0;
+        nd = 1;
     }
-    while v > 0 && d < digits.len() {
-        digits[d] = b'0' + (v % 10) as u8;
-        d += 1;
+    while v > 0 && nd < digits.len() {
+        digits[nd] = (v % 10) as u8;
+        nd += 1;
         v /= 10;
     }
-    for i in 0..d {
-        chars[n] = digits[d - 1 - i];
-        n += 1;
-    }
+    // digits[] holds least-significant first; render most-significant first.
 
-    // Scale down as the label grows so it stays inside the number column.
-    let scale = match n {
-        0..=2 => 14usize,
-        3 => 10,
-        _ => 8,
-    };
-    let gap = scale / 2;
-    let char_w = 3 * scale;
-    let total_w = n * char_w + (n - 1) * gap;
+    let margin = 6usize;
+    let usable = col_w.saturating_sub(2 * margin);
+    // Each glyph is 5 cells wide; digits are separated by one cell of space.
+    let cells_wide = nd * 5 + (nd - 1);
+    let scale = (usable / cells_wide).min(cover_h.saturating_sub(24) / 7).max(1);
+    let glyph_w = 5 * scale;
+    let gap = scale;
+    let total_w = nd * glyph_w + (nd - 1) * gap;
     let start_x = col_w.saturating_sub(total_w) / 2;
-    let start_y = (cover_h - 5 * scale) / 2;
+    let start_y = (cover_h - 7 * scale) / 2;
 
-    for (ci, &ch) in chars.iter().take(n).enumerate() {
-        let rows = glyph_3x5(ch);
-        let cx = start_x + ci * (char_w + gap);
+    for i in 0..nd {
+        let rows = digit_5x7(digits[nd - 1 - i]);
+        let gx = start_x + i * (glyph_w + gap);
         for (r, bits) in rows.iter().enumerate() {
-            for c in 0..3 {
-                if bits & (0b100 >> c) != 0 {
+            for c in 0..5 {
+                if bits & (1 << (4 - c)) != 0 {
                     for dy in 0..scale {
                         for dx in 0..scale {
-                            ink(buf, w, h, cx + c * scale + dx, start_y + r * scale + dy);
+                            ink(buf, w, h, gx + c * scale + dx, start_y + r * scale + dy);
                         }
                     }
                 }
