@@ -14,19 +14,16 @@ zero hardware).
 ```mermaid
 sequenceDiagram
     actor AH as Artist
-    participant A as Flex A · master
-    participant R as Laptop · untrusted relay
-    participant B as Flex B · receiver
+    participant A as Flex A (master)
+    participant R as Laptop (untrusted relay)
+    participant B as Flex B (receiver)
     actor BH as Collector
 
-    rect rgb(240,240,240)
     Note over A: CUT
     AH->>A: upload sleeve, cut album, edition of 5
-    A->>A: TRNG album key; seal sleeve hash + edition<br/>into a signed AlbumCert (never leaves the chip)
-    end
+    A->>A: TRNG album key, seal sleeve hash and edition into a signed AlbumCert
 
-    rect rgb(240,240,240)
-    Note over A,B: PAIR — commit-reveal ECDH through the relay
+    Note over A,B: PAIR, commit-reveal ECDH through the relay
     A->>R: commitment
     R->>B: commitment
     B->>R: ephemeral key
@@ -35,38 +32,33 @@ sequenceDiagram
     R->>B: reveal
     Note over A,B: both screens show the SAME 4 words
     AH-->>BH: compare words out loud
-    AH->>A: tap "Words match"
-    BH->>B: tap "Words match"
-    Note over A,R,B: a lying relay makes the words differ → humans abort
-    end
+    AH->>A: tap Words match
+    BH->>B: tap Words match
+    Note over A,B: a lying relay makes the words differ, humans abort
 
-    rect rgb(240,240,240)
     Note over A,B: PRESS
-    B->>R: request (device pubkey B)
+    B->>R: request, device pubkey B
     R->>A: request
-    A->>A: counter 5 → 4 in silicon,<br/>sign PressingCert bound to pubkey B
+    A->>A: counter 5 to 4 in silicon, sign PressingCert bound to pubkey B
     A->>R: PressingCert
     R->>B: PressingCert
-    BH->>B: tap "Receive"
-    end
+    BH->>B: tap Receive
 
-    rect rgb(240,240,240)
-    Note over B: VERIFY — offline, no network
-    BH->>B: challenge (random nonce)
-    B->>BH: signature by device key + cert chain
-    Note over BH: GENUINE: pressing 1 of 5, bound to this device
-    end
+    Note over B: VERIFY, offline, no network
+    BH->>B: challenge, a random nonce
+    B->>BH: signature by device key and cert chain
+    Note over BH: GENUINE, pressing 1 of 5, bound to this device
 ```
 
 ```mermaid
 flowchart LR
-    subgraph edition["signed edition (fixed at cut)"]
-        AC["AlbumCert<br/>album key · edition size · sleeve hash"]
-    end
-    AC -->|signs| PC["PressingCert<br/>number N of M · bound to device key"]
-    PC -->|challenge-response| DEV["the holding secure element<br/>proves it owns the bound key, live"]
-    AC -.->|album key lives only in the master's chip| PLATES["lose the master = plates destroyed"]
-    style edition fill:#f6f6f6,stroke:#bbb
+    AC["AlbumCert: album key, edition size, sleeve hash"]
+    PC["PressingCert: number N of M, bound to device key"]
+    DEV["the holding secure element proves it owns the bound key, live"]
+    PLATES["lose the master, plates destroyed"]
+    AC -->|signs| PC
+    PC -->|challenge-response| DEV
+    AC -.->|album key lives only in the master chip| PLATES
 ```
 
 ## The ceremony
