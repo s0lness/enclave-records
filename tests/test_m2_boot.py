@@ -29,7 +29,7 @@ def test_collection_empty(device):
 
 
 def test_home_screen_readable(device):
-    assert device.wait_for_text("Presse"), device.screen_texts()
+    assert device.wait_for_text("Enclave Records"), device.screen_texts()
 
 
 def test_dual_instances_distinct_identities(pair):

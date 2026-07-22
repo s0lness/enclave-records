@@ -39,7 +39,7 @@ def a_sleeve(seed: int = 0) -> bytes:
 
 def test_library_empty_state(device):
     """A fresh device opens on the library with the empty-state message."""
-    assert device.wait_for_text("Presse"), device.screen_texts()
+    assert device.wait_for_text("Enclave Records"), device.screen_texts()
     assert device.wait_for_text("No records yet"), device.screen_texts()
 
 
