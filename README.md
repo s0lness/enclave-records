@@ -1,5 +1,9 @@
 # secure element records demo
 
+![Enclave Records demo](docs/demo.gif)
+
+*An artist cuts a master, two Ledger Flex pair by comparing four words, a numbered copy is pressed onto the receiver, and anyone verifies it offline.*
+
 Finite editions of digital works, enforced by silicon. An artist device "cuts
 a master" of an album (edition size and press counter captive in a secure
 element), then "presses" numbered copies onto other devices through an
