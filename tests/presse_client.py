@@ -36,8 +36,14 @@ SW_SOLD_OUT = "b104"
 PUBKEY_LEN = 65
 MAC_LEN = 32
 SLEEVE_HASH_LEN = 32
+TITLE_MAX = 32
+# Capped so ALBUM_CERT_LEN (223) + MAC (32) == 255, the single-frame APDU limit.
+ARTIST_MAX = 13
 # magic(4) albpub(65) title_len(1) title(32) edition(2) sleeve_hash(32)
-ALBUM_PAYLOAD_LEN = 4 + PUBKEY_LEN + 1 + 32 + 2 + SLEEVE_HASH_LEN
+#   artist_len(1) artist(13)
+ARTIST_LEN_OFF = 4 + PUBKEY_LEN + 1 + TITLE_MAX + 2 + SLEEVE_HASH_LEN
+ARTIST_OFF = ARTIST_LEN_OFF + 1
+ALBUM_PAYLOAD_LEN = ARTIST_OFF + ARTIST_MAX
 ALBUM_CERT_LEN = ALBUM_PAYLOAD_LEN + 1 + 72
 PRESSING_PAYLOAD_LEN = 4 + 32 + 2 + 2 + PUBKEY_LEN
 PRESSING_CERT_LEN = PRESSING_PAYLOAD_LEN + 1 + 72
@@ -115,8 +121,13 @@ class Presse:
             "title": title,
         }
 
-    def cut(self, title: str, edition: int) -> bytes:
-        data = struct.pack("<H", edition) + title.encode()
+    def cut(self, title: str, edition: int, artist: str = "") -> bytes:
+        """CUT: edition(2 LE) || title_len(1) || title || artist. Artist is
+        optional and capped at ARTIST_MAX bytes so cert+MAC stays one frame."""
+        title_b = title.encode()
+        artist_b = artist.encode()
+        assert len(artist_b) <= ARTIST_MAX, f"artist over {ARTIST_MAX} bytes"
+        data = struct.pack("<HB", edition, len(title_b)) + title_b + artist_b
         body, sw = self.cmd_gated(INS_CUT, data, "Cut the master", "Cut master")
         assert sw == SW_OK, f"cut failed: {sw}"
         assert len(body) == ALBUM_CERT_LEN
@@ -213,9 +224,11 @@ def parse_album_cert(cert: bytes):
     title = cert[70 : 70 + title_len].decode()
     edition = struct.unpack_from("<H", cert, 102)[0]
     sleeve_hash = cert[104 : 104 + SLEEVE_HASH_LEN]
+    artist_len = cert[ARTIST_LEN_OFF]
+    artist = cert[ARTIST_OFF : ARTIST_OFF + artist_len].decode()
     sig_len = cert[ALBUM_PAYLOAD_LEN]
     sig = cert[ALBUM_PAYLOAD_LEN + 1 : ALBUM_PAYLOAD_LEN + 1 + sig_len]
-    return albpub, title, edition, sleeve_hash, sig, cert[:ALBUM_PAYLOAD_LEN]
+    return albpub, title, artist, edition, sleeve_hash, sig, cert[:ALBUM_PAYLOAD_LEN]
 
 
 def parse_pressing_cert(cert: bytes):
@@ -241,7 +254,9 @@ def verify_chain(album_cert: bytes, pressing_cert: bytes, holder_devpub: bytes) 
     """Full offline verification: album self-signature, pressing signature,
     album_id linkage, device binding, number sanity. The album signature now
     also covers the sleeve hash, so a returned sleeve_hash is authenticated."""
-    albpub, title, edition, sleeve_hash, alb_sig, alb_payload = parse_album_cert(album_cert)
+    albpub, title, artist, edition, sleeve_hash, alb_sig, alb_payload = parse_album_cert(
+        album_cert
+    )
     assert ecdsa_verify(albpub, alb_payload, alb_sig), "album cert signature invalid"
 
     album_id, number, p_edition, recvpub, p_sig, p_payload = parse_pressing_cert(pressing_cert)
@@ -252,6 +267,7 @@ def verify_chain(album_cert: bytes, pressing_cert: bytes, holder_devpub: bytes) 
     assert recvpub == holder_devpub, "pressing not bound to this device"
     return {
         "title": title,
+        "artist": artist,
         "number": number,
         "edition": edition,
         "sleeve_hash": sleeve_hash,
@@ -262,7 +278,7 @@ def verify_sleeve(album_cert: bytes, art_bytes: bytes) -> bool:
     """The sleeve is genuine iff its bytes hash to the sleeve_hash the album
     signature commits to. An all-zero sleeve_hash means the edition bound no
     sleeve. Independent of the device: this is the check a third party runs."""
-    _, _, _, sleeve_hash, _, _ = parse_album_cert(album_cert)
+    _, _, _, _, sleeve_hash, _, _ = parse_album_cert(album_cert)
     if sleeve_hash == b"\x00" * SLEEVE_HASH_LEN:
         return False
     return hashlib.sha256(art_bytes).digest() == sleeve_hash

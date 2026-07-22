@@ -3,7 +3,7 @@ Each subcommand is one relay action; UI-gated steps block until someone taps
 the device screen (in the browser page or on real glass).
 
     python3 relay/demo_steps.py art [path]  # upload the sleeve to A (pre-cut)
-    python3 relay/demo_steps.py cut [title] [edition]
+    python3 relay/demo_steps.py cut [title] [edition] [artist]
     python3 relay/demo_steps.py pair        # handshake, then SAS on both
     python3 relay/demo_steps.py press       # also carries the sleeve A->B
     python3 relay/demo_steps.py verify
@@ -128,10 +128,12 @@ def main():
     if step == "cut":
         title = sys.argv[2] if len(sys.argv) > 2 else "Random Access Memories"
         edition = int(sys.argv[3]) if len(sys.argv) > 3 else 5
-        data = struct.pack("<H", edition) + title.encode()
+        artist = sys.argv[4] if len(sys.argv) > 4 else "Daft Punk"
+        title_b, artist_b = title.encode(), artist.encode()
+        data = struct.pack("<HB", edition, len(title_b)) + title_b + artist_b
         body, sw = gated(a, INS_CUT, data, "Cut master", "Flex A")
         assert sw == SW_OK, f"refused ({sw})"
-        print(f'master of "{title}" cut, edition of {edition}: now physics.')
+        print(f'master of "{title}" by {artist} cut, edition of {edition}: now physics.')
 
     elif step == "pair":
         commitment = a.cmd(INS_PAIR_COMMIT)

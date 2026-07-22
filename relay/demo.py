@@ -71,6 +71,7 @@ def main():
     parser.add_argument("--collection", choices=["a", "b"],
                         help="browse the collection on device a or b (tap Back to leave)")
     parser.add_argument("--title", default="Random Access Memories")
+    parser.add_argument("--artist", default="Daft Punk")
     parser.add_argument("--edition", type=int, default=5)
     args = parser.parse_args()
 
@@ -116,8 +117,9 @@ def main():
         if os.path.exists(cover_path):
             upload_art(a, open(cover_path, "rb").read())
             print(f"   cover uploaded to Flex A ({os.path.basename(cover_path)})")
-        print(f'   cutting master of "{args.title}", edition of {args.edition}')
-        data = struct.pack("<H", args.edition) + args.title.encode()
+        print(f'   cutting master of "{args.title}" by {args.artist}, edition of {args.edition}')
+        title_b, artist_b = args.title.encode(), args.artist.encode()
+        data = struct.pack("<HB", args.edition, len(title_b)) + title_b + artist_b
         print("   >> confirm on Flex A")
         body, sw = split_sw(a.dev.apdu(apdu_hex(INS_CUT, data)))
         assert sw == SW_OK, f"cut refused: {sw}"

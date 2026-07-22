@@ -96,6 +96,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--auto", action="store_true", help="tap the screens automatically")
     parser.add_argument("--title", default="Random Access Memories")
+    parser.add_argument("--artist", default="Daft Punk")
     parser.add_argument("--edition", type=int, default=5)
     args = parser.parse_args()
 
@@ -111,11 +112,12 @@ def main():
 
     try:
         print("\n== cut the master ==")
-        data = struct.pack("<H", args.edition) + args.title.encode()
+        title_b, artist_b = args.title.encode(), args.artist.encode()
+        data = struct.pack("<HB", args.edition, len(title_b)) + title_b + artist_b
         _, sw = a.gated(INS_CUT, data, "Cut the master", "Cut master",
                         "on Flex A's page: tap 'Cut the master'")
         assert sw == SW_OK, f"cut refused ({sw})"
-        print(f'   master of "{args.title}" cut, edition of {args.edition}: now physics.')
+        print(f'   master of "{args.title}" by {args.artist} cut, edition of {args.edition}: now physics.')
 
         print("\n== pairing (this script is the untrusted relay) ==")
         commitment = a.cmd(INS_PAIR_COMMIT)

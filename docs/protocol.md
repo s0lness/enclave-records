@@ -22,7 +22,7 @@ Multi-byte integers little-endian.
 
 ## Certificates
 
-### AlbumCert (209 bytes, signed by albkey)
+### AlbumCert (223 bytes, signed by albkey)
 ```
 magic        u8[4]   "PRA1"
 albpub       u8[65]
@@ -30,14 +30,28 @@ title_len    u8
 title        u8[32]  (utf-8, zero-padded)
 edition      u16     (fixed forever at CUT)
 sleeve_hash  u8[32]  SHA256 of the canonical sleeve bytes; all-zero = no sleeve
+artist_len   u8
+artist       u8[13]  (utf-8, zero-padded)
 sig_len      u8
-sig          u8[72]  (DER, zero-padded; covers bytes 0..136)
+sig          u8[72]  (DER, zero-padded; covers bytes 0..150)
 ```
 
-The signature covers `sleeve_hash`, so the cover art is part of the signed
-identity of the edition, fixed at CUT. The art itself is public and travels
-separately (SET_ART / GET_ART); a device renders it only when its bytes hash
-to this field, otherwise it shows generative label art. See **Sleeve art**.
+The signature covers `sleeve_hash` and `artist`, so both the cover art and the
+artist name are part of the signed identity of the edition, fixed at CUT. The
+art itself is public and travels separately (SET_ART / GET_ART); a device
+renders it only when its bytes hash to this field, otherwise it shows generative
+label art. See **Sleeve art**.
+
+**Artist field and the APDU-size constraint.** `artist` is sealed at CUT beside
+the title. The whole AlbumCert travels in one PRESS_LOAD_ALBUM command as
+`cert || MAC(32)`, and a command's `Lc` may not exceed 255. That budget fixes
+the artist cap: `223 + 32 == 255` exactly, so `artist` is capped at **13 bytes**
+(a longer name is refused at CUT). The alternative, chunking GET_ALBUM /
+PRESS_LOAD_ALBUM into two frames to carry a full ~32-byte artist, was rejected
+for this lot: it would complicate the security-sensitive ceremony (per-frame MAC
+and reassembly) for a cosmetic field. The cap keeps the ceremony single-frame
+and unchanged. `artist` is placed after `sleeve_hash`, so every earlier offset
+(albpub, title, edition, sleeve_hash) is unchanged from the 209-byte layout.
 
 ### PressingCert (178 bytes, signed by albkey)
 ```
@@ -86,7 +100,7 @@ failure, SAS rejection, or power cycle kills the session.
 ```
 0x01 GET_INFO       -> flags(1) devpub(65) edition(2) counter(2) title_len(1) title(32)
 0x02 COLLECTION            [UI] -> ok   (opens the record card on screen)
-0x10 CUT            data = edition(2) title(1..32)     [UI] -> AlbumCert
+0x10 CUT            data = edition(2) title_len(1) title(1..32) artist(0..13) [UI] -> AlbumCert
 0x21 PAIR_COMMIT    (master)                    -> C(32)
 0x22 PAIR_RESPOND   (receiver) data=C(32)       -> EB(65)
 0x23 PAIR_REVEAL    (master)   data=EB(65)      -> EA(65)
@@ -153,13 +167,40 @@ is rendered honestly (generative), never surfaced as an error.
 
 The app opens on the **library**: a list of the records the device holds, each
 row a decimated sleeve thumbnail, the title from the certificate, and a status
-line, over a "Quitter" footer that exits. Tapping a row opens the **record
-card** (full-size sleeve, title, status), and a swipe reaches a **detail page**
-(album id, edition, this copy, and for a master the issued-pressing log). The
-library runs an APDU-aware event loop: it is the screen present when a ceremony
-begins, so it yields the instant a command arrives, lets the main loop serve
-it, and redraws from fresh NVM afterward. A ceremony therefore proceeds
-unchanged with the library on screen.
+line, over a "Quitter" footer that exits. Row status uses the "#N / M" family:
+a pressing row reads `#1 / 5`, and the master's own row reads
+`Your master · N of M left` (or `sold out`). The library runs an APDU-aware
+event loop: it is the screen present when a ceremony begins, so it yields the
+instant a command arrives, lets the main loop serve it, and redraws from fresh
+NVM afterward. A ceremony therefore proceeds unchanged with the library on
+screen. A command that draws its own screen (a UI-gated command, or the record
+card) is served with the library first dropped, so the card gets the whole RAM
+budget; a data-plane burst (a bulk sleeve transfer) leaves the library standing
+and does not repaint per chunk.
+
+Tapping a row opens the **record card**, a two-page generic review:
+
+- **Page 1 of 2 — the record card.** A large `#N` on the left, the 160px cover
+  to its right with a short Cover Flow mirror reflection (the cover flipped,
+  ordered-Bayer dithered from ~0.55 at the seam to 0, strict 1-bit), and the
+  album title in bold below, the block vertically centred. The number, cover and
+  reflection are composited in RAM at draw time; nothing extra is stored in NVM.
+  A master's card omits the `#N` (a plate is not a numbered copy). When no
+  verified sleeve is loaded, the generative label art stands in. The `< N of 2 >`
+  pager and "Back" sit in the footer.
+- **Page 2 of 2 — the back of the record.** A tag/value list: Copy (`#N of M`,
+  or `Master plate of M`), Artist, Album, and Edition ID (the first 8 hex of
+  `SHA256(albpub)`). The Edition ID row carries a **compiled** circled-i glyph
+  (`include_gif`, baked by build.rs — a runtime heap icon faults under PIC
+  relocation on this target); tapping the row opens the authenticity page.
+
+The **authenticity** page states what the device proves (this is copy #N of a
+sealed edition of M, the artwork is genuine and unaltered, it is bound to this
+device) and what it cannot (that the album key belongs to the real artist), with
+the note to confirm the Edition ID on the artist's official channel, because a
+copycat could reuse the same artwork under a different Edition ID.
+
+The CUT confirmation names the artist: `Cut master of <title> by <artist>?`.
 
 ## Press semantics
 
