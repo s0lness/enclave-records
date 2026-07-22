@@ -1,33 +1,48 @@
-use crate::certs::{build_album_cert, SLEEVE_HASH_LEN, TITLE_MAX};
+use crate::certs::{build_album_cert, ARTIST_MAX, SLEEVE_HASH_LEN, TITLE_MAX};
 use crate::crypto;
 use crate::state::{Art, Store};
 use crate::AppSW;
 use alloc::format;
 use ledger_device_sdk::io::{Command, CommandResponse};
 
-/// CUT: data = edition(u16 LE) || title(1..=32 bytes utf-8).
-/// UI-gated. One master per device; re-cutting requires RESET_MASTER first.
+/// CUT: data = edition(u16 LE) || title_len(1) || title(title_len bytes utf-8)
+/// || artist(0..=13 bytes utf-8). The explicit title length delimits the two
+/// variable-length names in one frame. UI-gated. One master per device;
+/// re-cutting requires RESET_MASTER first.
 pub fn handler_cut(command: Command<'_>) -> Result<CommandResponse<'_>, AppSW> {
     let data = command.get_data();
-    if data.len() < 3 || data.len() > 2 + TITLE_MAX {
+    if data.len() < 4 {
         return Err(AppSW::WrongApduLength);
     }
     let edition = u16::from_le_bytes([data[0], data[1]]);
     if edition == 0 {
         return Err(AppSW::BadCert);
     }
-    let title_len = data.len() - 2;
+    let title_len = data[2] as usize;
+    if title_len == 0 || title_len > TITLE_MAX || data.len() < 3 + title_len {
+        return Err(AppSW::WrongApduLength);
+    }
+    let artist_len = data.len() - 3 - title_len;
+    if artist_len > ARTIST_MAX {
+        return Err(AppSW::WrongApduLength);
+    }
     let mut title_buf = [0u8; TITLE_MAX];
-    title_buf[..title_len].copy_from_slice(&data[2..]);
-    let title_bytes = &title_buf[..title_len];
-    let title = core::str::from_utf8(title_bytes).map_err(|_| AppSW::BadCert)?;
+    title_buf[..title_len].copy_from_slice(&data[3..3 + title_len]);
+    let title = core::str::from_utf8(&title_buf[..title_len]).map_err(|_| AppSW::BadCert)?;
+    let mut artist_buf = [0u8; ARTIST_MAX];
+    artist_buf[..artist_len].copy_from_slice(&data[3 + title_len..]);
+    let artist = core::str::from_utf8(&artist_buf[..artist_len]).map_err(|_| AppSW::BadCert)?;
 
     let mut nvm = Store::get()?;
     if nvm.has_master == 1 {
         return Err(AppSW::HasMaster);
     }
 
-    let message = format!("Cut master of\n{}?", title);
+    let message = if artist_len == 0 {
+        format!("Cut master of\n{}?", title)
+    } else {
+        format!("Cut master of\n{} by {}?", title, artist)
+    };
     let submessage = format!(
         "Edition of {}, fixed forever.\nLosing this device destroys the plates.",
         edition
@@ -48,7 +63,14 @@ pub fn handler_cut(command: Command<'_>) -> Result<CommandResponse<'_>, AppSW> {
     };
 
     let (alb_priv, alb_pub) = crypto::gen_keypair()?;
-    let cert = build_album_cert(&alb_priv, &alb_pub, &title_buf[..title_len], edition, &sleeve_hash)?;
+    let cert = build_album_cert(
+        &alb_priv,
+        &alb_pub,
+        &title_buf[..title_len],
+        edition,
+        &sleeve_hash,
+        &artist_buf[..artist_len],
+    )?;
 
     nvm.has_master = 1;
     nvm.alb_priv = alb_priv;
