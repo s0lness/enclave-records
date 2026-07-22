@@ -71,7 +71,7 @@ flowchart LR
 
 ## The ceremony
 
-1. **Cut** - Flex A confirms "Cut master of *Nuits Roses*, edition of 5".
+1. **Cut** - Flex A confirms "Cut master of *Random Access Memories*, edition of 5".
    The edition size is fixed forever; losing the device destroys the plates.
 2. **Pair** - the two devices run a commit-then-reveal ECDH through the relay;
    both screens show the same 4 words. The humans compare them out loud: a
