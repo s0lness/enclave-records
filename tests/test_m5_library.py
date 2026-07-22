@@ -23,12 +23,23 @@ from presse_client import (
     run_press,
     ART_LEN,
     INS_COLLECTION,
+    INS_CUT,
     SLEEVE_HASH_LEN,
     SW_OK,
 )
 
 TITLE = "Nocturne"
+ARTIST = "Chopin"
 EDITION = 5
+
+
+def open_card_pages(dev, p):
+    """From the library, tap the record row, then walk card -> back -> auth.
+    Returns after leaving the auth page on the back-of-record page."""
+    p.tap_text(TITLE)
+    assert dev.wait_for_text("1 of 2"), dev.screen_texts()  # the card pager
+    p.tap_text("1 of 2")  # pager -> back of record
+    assert dev.wait_for_text("Edition ID"), dev.screen_texts()
 
 
 def a_sleeve(seed: int = 0) -> bytes:
@@ -48,21 +59,24 @@ def test_library_empty_state(device):
 
 def test_library_lists_the_master_after_cut(device):
     """After a cut the library redraws to show the record: title from the
-    certificate, plus a status line."""
+    certificate, plus the master status line in the new "#N / M" family."""
     p = Presse(device)
     p.cut(TITLE, EDITION)
     assert device.wait_for_text(TITLE), device.screen_texts()
-    assert device.wait_for_text("left to press"), device.screen_texts()
+    # The master's own row: "Your master · N of M left" (drops "on this device").
+    assert device.wait_for_text("Your master"), device.screen_texts()
+    assert device.wait_for_text("5 of 5 left"), device.screen_texts()
 
 
 def test_tapping_a_row_opens_the_record_card(device):
-    """Tapping the record row opens its card (the full-size sleeve screen with
-    the edition line), and Back returns to the library."""
+    """Tapping the record row opens its card (page 1 of 2, with the pager
+    chevrons from the generic-review-style footer), and Back returns."""
     p = Presse(device)
     p.cut(TITLE, EDITION)
     assert device.wait_for_text(TITLE)
     p.tap_text(TITLE)
-    assert device.wait_for_text("My master, edition of"), device.screen_texts()
+    # The card is page 1 of 2: the pager chevrons show.
+    assert device.wait_for_text("1 of 2"), device.screen_texts()
     p.tap_text("Back")
     # Back on the library: the row is shown again.
     assert device.wait_for_text(TITLE), device.screen_texts()
@@ -73,12 +87,54 @@ def test_record_title_comes_from_the_certificate(device):
     bitmap: it survives whatever art (or none) is uploaded."""
     p = Presse(device)
     upload_art(p, a_sleeve())
-    album_cert = p.cut(TITLE, EDITION)
-    _, cert_title, _, _, _, _ = parse_album_cert(album_cert)
+    album_cert = p.cut(TITLE, EDITION, ARTIST)
+    _, cert_title, cert_artist, _, _, _, _ = parse_album_cert(album_cert)
     assert cert_title == TITLE
+    assert cert_artist == ARTIST
     p.tap_text(TITLE)
     assert device.wait_for_text(TITLE), device.screen_texts()
     p.tap_text("Back")
+
+
+def test_cut_confirmation_names_the_artist(device):
+    """The cut review reads "Cut master of <title> by <artist>?" so the artist
+    is confirmed on-device before it is sealed."""
+    title_b, artist_b = TITLE.encode(), ARTIST.encode()
+    data = struct.pack("<HB", EDITION, len(title_b)) + title_b + artist_b
+    thread, result = device.apdu_async_start(apdu_hex(INS_CUT, data))
+    assert device.wait_for_text("Cut master of"), device.screen_texts()
+    assert device.wait_for_text("by " + ARTIST), device.screen_texts()
+    Presse(device).tap_text("Cut the master")
+    thread.join(timeout=30)
+    assert split_sw(result["data"])[1] == SW_OK
+
+
+def test_back_of_record_shows_the_tag_fields(device):
+    """Page 2 (the back of the record) lists Copy / Artist / Album / Edition ID,
+    the artist coming straight off the certificate."""
+    p = Presse(device)
+    p.cut(TITLE, EDITION, ARTIST)
+    assert device.wait_for_text(TITLE)
+    open_card_pages(device, p)
+    assert device.wait_for_text("Artist"), device.screen_texts()
+    assert device.wait_for_text(ARTIST), device.screen_texts()
+    assert device.wait_for_text("Album"), device.screen_texts()
+    assert device.wait_for_text("Edition ID"), device.screen_texts()
+    p.tap_text("Back")
+
+
+def test_info_affordance_opens_authenticity(device):
+    """Tapping the Edition ID row (which carries the compiled circled-i glyph)
+    opens the authenticity page, and Back returns to the record."""
+    p = Presse(device)
+    p.cut(TITLE, EDITION, ARTIST)
+    assert device.wait_for_text(TITLE)
+    open_card_pages(device, p)
+    p.tap_text("Edition ID")  # the info affordance
+    assert device.wait_for_text("This device proves"), device.screen_texts()
+    assert device.wait_for_text("It cannot prove"), device.screen_texts()
+    p.tap_text("Back")  # authenticity -> back of record
+    assert device.wait_for_text("Edition ID"), device.screen_texts()
 
 
 # --- the library redraws only when it could have changed ----------------
@@ -99,33 +155,34 @@ def test_bulk_art_upload_leaves_the_library_intact(device):
     # The library still lists the record, unchanged, and the device is still
     # serving commands: the burst neither corrupted the screen nor wedged it.
     assert device.wait_for_text(TITLE), device.screen_texts()
-    assert device.wait_for_text("left to press"), device.screen_texts()
+    assert device.wait_for_text("Your master"), device.screen_texts()
     assert p.get_info()["title"] == TITLE
 
 
-def test_press_repaints_the_receiver_with_the_real_sleeve(pair):
+def test_press_repaints_the_receiver_with_the_pressing(pair):
     """The receiver repaints its library only when the pressing lands. Carrying
     the sleeve across before PRESS_ACCEPT means that single repaint shows the
-    real, hash-verified cover, never the generative placeholder: the record card
-    reports the sleeve "Verified"."""
+    real, hash-verified cover. The pressing card then reads "#1 / 5" in the
+    library and "#1 of 5" on the back of the record."""
     a, b = pair
     master, receiver = Presse(a), Presse(b)
 
     art = a_sleeve()
     upload_art(master, art)  # sealed into the cut's signed sleeve hash
-    master.cut(TITLE, EDITION)
+    master.cut(TITLE, EDITION, ARTIST)
     run_pairing(master, receiver)
     confirm_sas_both(master, receiver)
     run_press(master, receiver, carry_from=master)
 
-    # B's library repainted on accept and now lists the pressing.
+    # B's library repainted on accept and now lists the pressing as "#1 / 5".
     assert b.wait_for_text(TITLE), b.screen_texts()
+    assert b.wait_for_text("#1 / 5"), b.screen_texts()
 
     thread, res = b.apdu_async_start(apdu_hex(INS_COLLECTION))
-    assert b.wait_for_text("Pressing 1 of"), b.screen_texts()
-    b.finger(430, 550)  # swipe to the provenance page
-    # The carried bytes hash to the sealed sleeve hash, so B vouches for them.
-    assert b.wait_for_text("Verified"), b.screen_texts()
+    assert b.wait_for_text("1 of 2"), b.screen_texts()  # the card
+    receiver.tap_text("1 of 2")  # pager -> back of record
+    assert b.wait_for_text("#1 of 5"), b.screen_texts()
+    assert b.wait_for_text(ARTIST), b.screen_texts()
     receiver.tap_text("Back")
     thread.join(timeout=30)
     assert split_sw(res["data"])[1] == SW_OK
@@ -156,7 +213,7 @@ def test_cut_without_art_binds_no_sleeve(device):
     against it fails."""
     p = Presse(device)
     album_cert = p.cut(TITLE, EDITION)
-    _, _, _, sleeve_hash, _, _ = parse_album_cert(album_cert)
+    _, _, _, _, sleeve_hash, _, _ = parse_album_cert(album_cert)
     assert sleeve_hash == b"\x00" * SLEEVE_HASH_LEN
     assert not verify_sleeve(album_cert, a_sleeve())
 
@@ -173,7 +230,9 @@ def test_mismatched_art_still_renders_the_record(device):
     upload_art(p, a_sleeve(seed=99))
 
     thread, result = device.apdu_async_start(apdu_hex(INS_COLLECTION))
-    assert device.wait_for_text("My master, edition of"), device.screen_texts()
+    # The card still opens (page 1 of 2) rather than failing closed.
+    assert device.wait_for_text("1 of 2"), device.screen_texts()
+    assert device.wait_for_text(TITLE), device.screen_texts()
     p.tap_text("Back")
     thread.join(timeout=30)
     assert split_sw(result["data"])[1] == SW_OK

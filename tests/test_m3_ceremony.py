@@ -21,6 +21,7 @@ from presse_client import (
 )
 
 TITLE = "Nuits Roses"
+ARTIST = "Vespertine"
 EDITION = 3
 
 
@@ -34,7 +35,7 @@ def test_full_ceremony_and_offline_verification(ceremony):
     master, receiver = ceremony
 
     # Cut the master on A.
-    album_cert = master.cut(TITLE, EDITION)
+    album_cert = master.cut(TITLE, EDITION, ARTIST)
     info_a = master.get_info()
     assert info_a["has_master"] and info_a["counter"] == EDITION
 
@@ -53,6 +54,7 @@ def test_full_ceremony_and_offline_verification(ceremony):
     stored_album = receiver.cmd(0x40, p1=1)
     result = verify_chain(stored_album, pressing_cert, info_b["devpub"])
     assert result["title"] == TITLE
+    assert result["artist"] == ARTIST
     assert result["number"] == 1
     assert result["edition"] == EDITION
     # This edition was cut with no sleeve uploaded, so the signed sleeve hash
@@ -60,30 +62,26 @@ def test_full_ceremony_and_offline_verification(ceremony):
     assert result["sleeve_hash"] == b"\x00" * 32
     verify_possession(receiver, pressing_cert)
 
-    # On-device collection: an album card first (big art, edition line), the
-    # detail list on the next page (navigate like a finger would).
-    NEXT_PAGE = (430, 550)
-
+    # On-device collection: the record card (page 1 of 2), then the back of the
+    # record (page 2) reached through the pager, listing the tag fields.
     thread, res = master.dev.apdu_async_start(apdu_hex(INS_COLLECTION))
-    assert master.dev.wait_for_text("My master, edition of")
-    assert master.dev.wait_for_text("left to press")
-    master.dev.finger(*NEXT_PAGE)
-    assert master.dev.wait_for_text("Still to press")
-    assert master.dev.wait_for_text("Pressed 1 of")
-    assert master.dev.wait_for_text("for device ")
+    assert master.dev.wait_for_text("1 of 2")  # the card pager
+    assert master.dev.wait_for_text(TITLE)
+    master.tap_text("1 of 2")  # pager -> back of record
+    assert master.dev.wait_for_text("Master plate of")
+    assert master.dev.wait_for_text(ARTIST)
+    assert master.dev.wait_for_text("Edition ID")
     master.tap_text("Back")
     thread.join(timeout=30)
     assert split_sw(res["data"])[1] == SW_OK
 
     thread, res = receiver.dev.apdu_async_start(apdu_hex(INS_COLLECTION))
-    assert receiver.dev.wait_for_text("Pressing 1 of")
+    assert receiver.dev.wait_for_text("1 of 2")
     assert receiver.dev.wait_for_text(TITLE)
-    receiver.dev.finger(*NEXT_PAGE)
-    # Provenance page: album fingerprint, pressing number, sleeve status, seal.
-    assert receiver.dev.wait_for_text("Album fingerprint")
-    assert receiver.dev.wait_for_text("Sealed")
-    # No art was uploaded in this ceremony, so the sleeve is honestly unloaded.
-    assert receiver.dev.wait_for_text("Not loaded")
+    receiver.tap_text("1 of 2")  # pager -> back of record
+    assert receiver.dev.wait_for_text("#1 of 3")
+    assert receiver.dev.wait_for_text(ARTIST)
+    assert receiver.dev.wait_for_text("Edition ID")
     receiver.tap_text("Back")
     thread.join(timeout=30)
     assert split_sw(res["data"])[1] == SW_OK
