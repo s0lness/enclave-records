@@ -22,16 +22,22 @@ Multi-byte integers little-endian.
 
 ## Certificates
 
-### AlbumCert (177 bytes, signed by albkey)
+### AlbumCert (209 bytes, signed by albkey)
 ```
-magic      u8[4]   "PRA1"
-albpub     u8[65]
-title_len  u8
-title      u8[32]  (utf-8, zero-padded)
-edition    u16     (fixed forever at CUT)
-sig_len    u8
-sig        u8[72]  (DER, zero-padded; covers bytes 0..104)
+magic        u8[4]   "PRA1"
+albpub       u8[65]
+title_len    u8
+title        u8[32]  (utf-8, zero-padded)
+edition      u16     (fixed forever at CUT)
+sleeve_hash  u8[32]  SHA256 of the canonical sleeve bytes; all-zero = no sleeve
+sig_len      u8
+sig          u8[72]  (DER, zero-padded; covers bytes 0..136)
 ```
+
+The signature covers `sleeve_hash`, so the cover art is part of the signed
+identity of the edition, fixed at CUT. The art itself is public and travels
+separately (SET_ART / GET_ART); a device renders it only when its bytes hash
+to this field, otherwise it shows generative label art. See **Sleeve art**.
 
 ### PressingCert (178 bytes, signed by albkey)
 ```
@@ -47,7 +53,10 @@ sig        u8[72]  (covers bytes 0..105)
 A verifier accepts a pressing iff: AlbumCert self-verifies, PressingCert
 verifies under albpub, album_id == SHA256(albpub), editions match,
 1 <= number <= edition, and the presenting device proves live possession of
-recvpub via CHALLENGE.
+recvpub via CHALLENGE. Because the album signature covers `sleeve_hash`, the
+sleeve is authenticated transitively: a verifier that also holds the art bytes
+accepts them iff SHA256(art) == sleeve_hash (and rejects an all-zero hash as
+"no sleeve").
 
 ## Pairing (commit-then-reveal ECDH, 4-word SAS)
 
@@ -76,6 +85,7 @@ failure, SAS rejection, or power cycle kills the session.
 
 ```
 0x01 GET_INFO       -> flags(1) devpub(65) edition(2) counter(2) title_len(1) title(32)
+0x02 COLLECTION            [UI] -> ok   (opens the record card on screen)
 0x10 CUT            data = edition(2) title(1..32)     [UI] -> AlbumCert
 0x21 PAIR_COMMIT    (master)                    -> C(32)
 0x22 PAIR_RESPOND   (receiver) data=C(32)       -> EB(65)
@@ -91,10 +101,65 @@ failure, SAS rejection, or power cycle kills the session.
 0x41 CHALLENGE      data=nonce(32) -> sig_len(1) || DER sig by devkey
                     over SHA256("presse-verify" || nonce)
 0x50 RESET_MASTER   [UI, scary] -> wipes the master
+0x62 SET_ART        data = offset(2 LE) || chunk(64)   -> ok   (public art upload)
+0x64 GET_ART        p1 = chunk index                   -> chunk(<=64)
 ```
-[UI] = blocks on an explicit user confirmation on the device screen.
+[UI] = blocks on an explicit user confirmation on the device screen, drawn
+over the library (the landing screen), which yields to the incoming APDU.
 Album + pressing certs travel in separate APDUs because both together exceed
 the 255-byte APDU data limit.
+
+Art must be uploaded (SET_ART) **before** CUT: the cut hashes the current art
+region into the certificate's `sleeve_hash`. There is no separate seal step.
+For a pressing, the sleeve is carried across with SET_ART and validated against
+the `sleeve_hash` already inside the album cert the receiver stored.
+
+## Sleeve art
+
+A sleeve is the album cover: a square **1bpp** bitmap, `N x N`, `N*N/8` bytes,
+no header. `N = 160` (3200 bytes) is the largest that fits the device's NVRAM
+data budget (which tops out at 32256 bytes, 63 pages of 512). The device draws
+the title itself, at runtime, from the certificate; the bitmap carries no
+typography, so a baked-in title can never disagree with the signed one.
+
+**Packing** (host side, `scripts/sleeve.py`; device rendering is the inverse).
+The display decodes the buffer row-major and shows it rotated 90 degrees
+clockwise, so the packer pre-rotates 90 degrees counter-clockwise. For image
+pixel `(x, y)` of an `N x N` sleeve:
+
+```
+bit  = (N - 1 - x) * N + y
+byte = bit / 8      mask = 0x80 >> (bit % 8)      # MSB = first pixel
+```
+
+This convention (rotate, MSB-first) was measured against on-device renders,
+not assumed: `scripts/check-packing.py` correlates a screenshot against every
+candidate and reports 1.0 only for this one.
+
+**Polarity.** The canonical bytes are white-art-on-black: a **set bit is lit
+(white) art**, matching every preview `sleeve.py` emits. These canonical bytes
+are what SHA-256 hashes into `sleeve_hash`. This 1bpp render path, however,
+draws a set bit *black*, so the device inverts the bits at draw time only; the
+stored and hashed bytes are never touched. Hash the canonical asset, render its
+complement.
+
+**Binding and fallback.** `sleeve_hash` in the AlbumCert is SHA256 of the
+canonical bytes, or all-zero when the edition was cut with no sleeve. A device
+renders stored art iff the region is non-blank and `SHA256(art) == sleeve_hash`;
+otherwise it draws generative label art derived from the album id. A mismatch
+is rendered honestly (generative), never surfaced as an error.
+
+## On-device UI
+
+The app opens on the **library**: a list of the records the device holds, each
+row a decimated sleeve thumbnail, the title from the certificate, and a status
+line, over a "Quitter" footer that exits. Tapping a row opens the **record
+card** (full-size sleeve, title, status), and a swipe reaches a **detail page**
+(album id, edition, this copy, and for a master the issued-pressing log). The
+library runs an APDU-aware event loop: it is the screen present when a ceremony
+begins, so it yields the instant a command arrives, lets the main loop serve
+it, and redraws from fresh NVM afterward. A ceremony therefore proceeds
+unchanged with the library on screen.
 
 ## Press semantics
 
@@ -114,4 +179,7 @@ the 255-byte APDU data limit.
   Enforcement against a MODIFIED app rests on attestation (BOLOS endorsement),
   NOT in v1: v1's fallback is fraud-evidence (two certs with the same number
   are mutually incriminating). Open question tracked in docs/m5-hardware.md.
+- Swapped/tampered sleeve -> SHA256(art) != signed sleeve_hash -> the device
+  refuses the bitmap and shows generative art, so a forged cover can never be
+  passed off under a genuine edition's certificate. (tested, M5)
 - Cloning a receiver = extracting a key from the SE: the explicit bet.

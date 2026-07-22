@@ -25,7 +25,8 @@ thesis (physical editions of digital works, no chain, no server).
 
 master (the artist's plate, holds the press counter), pressing (numbered copy, "4/5"),
 cut (create a master), press (issue a copy onto a device), sold out (counter at 0),
-album (the work). Never "mint/child/mother/token".
+album (the work), sleeve (the cover art, a 1bpp square hashed into the album cert).
+Never "mint/child/mother/token".
 
 ## Build & run (everything in WSL Ubuntu, aarch64)
 
@@ -46,3 +47,9 @@ album (the work). Never "mint/child/mother/token".
   re-press off-device). Losing the master = plates destroyed, by design.
 - Speculos OCR (`/events`) is how tests read the screens; SAS word equality across the
   two instances is asserted through it.
+- The app opens on a **library** (the landing screen), not a home button; it is built
+  from raw `nbgl_layout` and yields to APDUs so a ceremony works with it on screen.
+- Sleeves must be uploaded (SET_ART) **before** the cut: the cut hashes the art into
+  the album cert's `sleeve_hash`. No separate seal step. `scripts/sleeve.py` packs a
+  cover into the exact 1bpp bytes; the device inverts polarity at render time only
+  (canonical bytes are white-on-black and are what the hash covers). See docs/protocol.md.
