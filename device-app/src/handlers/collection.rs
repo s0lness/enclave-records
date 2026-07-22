@@ -262,7 +262,7 @@ pub fn show_library() -> Result<LibraryAction, AppSW> {
     };
 
     let mut layout = Layout::new();
-    layout.header(cstr(String::from("Presse")), core::ptr::null());
+    layout.header(cstr(String::from("Enclave Records")), core::ptr::null());
 
     let mut has_any = false;
 
