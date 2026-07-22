@@ -363,6 +363,9 @@ pub const TOKEN_PRESSING: u8 = 1;
 /// Control tokens, kept well clear of the row range.
 pub const TOKEN_INFO: u8 = 250;
 pub const TOKEN_QUIT: u8 = 251;
+/// Record-card controls: "Back" (footer left) and the pager (footer right).
+pub const TOKEN_BACK: u8 = 252;
+pub const TOKEN_PAGER: u8 = 253;
 
 /// A screen built through the app-side `nbgl_layout` API.
 ///
@@ -473,6 +476,40 @@ impl Layout {
     pub fn footer(&mut self, text: *const core::ffi::c_char, token: u8) {
         unsafe {
             nbgl_layoutAddFooter(self.handle, text, token, 0);
+        }
+    }
+
+    /// A bottom bar split in two: a left action (e.g. "Back") and a right one
+    /// (the record card's "< N of 2 >" pager), each reporting its own token.
+    pub fn split_footer(
+        &mut self,
+        left: *const core::ffi::c_char,
+        left_token: u8,
+        right: *const core::ffi::c_char,
+        right_token: u8,
+    ) {
+        unsafe {
+            nbgl_layoutAddSplitFooter(self.handle, left, left_token, right, right_token, 0);
+        }
+    }
+
+    /// A tag/value list (small grey tag over its value), the back-of-record
+    /// layout. The pairs and their strings must outlive the screen.
+    pub fn tag_value_list(&mut self, pairs: &[nbgl_contentTagValue_t]) {
+        let list = nbgl_layoutTagValueList_t {
+            pairs: pairs.as_ptr(),
+            callback: None,
+            nbPairs: pairs.len() as u8,
+            startIndex: 0,
+            hideEndOfLastLine: false,
+            nbMaxLinesForValue: 0,
+            token: 0,
+            smallCaseForValue: true,
+            wrapping: true,
+            actionCallback: None,
+        };
+        unsafe {
+            nbgl_layoutAddTagValueList(self.handle, &list);
         }
     }
 

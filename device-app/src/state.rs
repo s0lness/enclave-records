@@ -71,7 +71,6 @@ static mut DATA: NVMData<AtomicStorage<PresseNvm>> = NVMData::new(AtomicStorage:
 /// region tops out at 32256 bytes (63 pages), and 192x192 pushes it to 32768,
 /// where the loader accepts the app but it exits before the first APDU.
 pub const ART_W: usize = 160;
-pub const ART_BPP: usize = 1;
 pub const ART_LEN: usize = ART_W * ART_W / 8;
 
 /// Stored as page-aligned cells and written one cell at a time: the SDK's
