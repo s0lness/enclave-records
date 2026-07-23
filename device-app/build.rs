@@ -85,6 +85,36 @@ fn write_info_glyph(path: &std::path::Path) {
     write_gray_png(path, N as u32, N as u32, &px);
 }
 
+/// Draw a right-pointing chevron ("›") procedurally, the tap affordance at the
+/// right end of the back-of-record rows. Like the info glyph it must be a
+/// *compiled* icon (`include_gif!`): a runtime heap icon faults under PIC on
+/// this target. Black ink is 0, white ground is 255.
+fn write_chevron_glyph(path: &std::path::Path) {
+    const N: i32 = 32;
+    let mut px = vec![255u8; (N * N) as usize];
+    let mut set = |x: i32, y: i32| {
+        if (0..N).contains(&x) && (0..N).contains(&y) {
+            px[(y * N + x) as usize] = 0;
+        }
+    };
+    // Two arms meeting at a right-facing tip ("›"): the spread is widest at the
+    // left base and closes to a point at the right tip. Drawn with a short
+    // vertical brush so the stroke reads at a glance.
+    let tip_x = 21;
+    let base_x = 12;
+    let mid = (N - 1) / 2;
+    let span = tip_x - base_x;
+    for i in 0..=span {
+        let x = base_x + i;
+        let spread = span - i;
+        for t in 0..3 {
+            set(x, mid - spread - t);
+            set(x, mid + spread + t);
+        }
+    }
+    write_gray_png(path, N as u32, N as u32, &px);
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=script.ld");
     println!("cargo:rerun-if-changed=icons/crab_14x14.gif");
@@ -92,6 +122,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     write_info_glyph(&PathBuf::from("glyphs").join("info_nbgl.png"));
+    write_chevron_glyph(&PathBuf::from("glyphs").join("chevron_nbgl.png"));
 
     let icons = PathBuf::from("icons");
     let (width, height, mut gray) = gif_to_luma(&icons.join("crab_14x14.gif"));

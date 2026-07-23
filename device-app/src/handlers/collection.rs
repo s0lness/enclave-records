@@ -76,11 +76,91 @@ fn sleeve_verified(sleeve_hash: &[u8; 32]) -> bool {
 //  Flex / Stax: the record card, its back, and the authenticity sub-page.
 // ==========================================================================
 
-/// The circled-i info affordance. A *compiled* glyph (`include_gif`), generated
-/// at build time by `build.rs`: a runtime heap icon faults under PIC relocation
-/// on this target, so the info button must point at baked flash.
+/// The right-pointing chevron ("›") that ends each back-of-record row: the tap
+/// affordance for the row's sub-page. A *compiled* glyph (`include_gif`),
+/// generated at build time by `build.rs`, because a runtime heap icon faults
+/// under PIC relocation on this target, so it must point at baked flash.
 #[cfg(any(target_os = "stax", target_os = "flex"))]
-const INFO_ICON: NbglGlyph = NbglGlyph::from_include(include_gif!("glyphs/info_nbgl.png", NBGL));
+const CHEVRON_ICON: NbglGlyph =
+    NbglGlyph::from_include(include_gif!("glyphs/chevron_nbgl.png", NBGL));
+
+/// The separator between the two facts of a library row's status line
+/// ("Master record{SEP}N of M left to press"). The device font ships no dot
+/// glyph (neither the U+2022 bullet nor the U+00B7 middle dot render: they drop
+/// out to a bare gap), so the separator is a hyphen, which does render. One
+/// space on each side.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+const ROW_SEP: &str = " - ";
+
+/// Shorten `text` so it renders on a single line no wider than `max_px` in
+/// `font`, appending an ASCII ellipsis when it had to cut. A library row's
+/// title must never wrap: a wrapped title grows the row and shoves the status
+/// line into the record below it. Measured with the SDK's own metrics so it
+/// holds for any title, not a guessed character budget.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+fn fit_one_line(text: &str, font: ledger_secure_sdk_sys::nbgl_font_id_e, max_px: u16) -> String {
+    let measure = |s: &str| -> u16 {
+        let c = CString::new(s).unwrap_or_default();
+        unsafe { ledger_secure_sdk_sys::nbgl_getSingleLineTextWidth(font, c.as_ptr()) }
+    };
+    if measure(text) <= max_px {
+        return String::from(text);
+    }
+    let ellipsis = "...";
+    let mut end = text.len();
+    while end > 0 {
+        end -= 1;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let candidate = format!("{}{}", text[..end].trim_end(), ellipsis);
+        if measure(&candidate) <= max_px {
+            return candidate;
+        }
+    }
+    String::from(ellipsis)
+}
+
+/// Widest a library row's title may be before it is truncated: the row's inner
+/// width less the thumbnail on its left and a margin so the status line's first
+/// word is never crowded. Flex is 480 wide; the value is deliberately
+/// conservative so the title always clears the thumbnail on one line.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+const ROW_TITLE_MAX_PX: u16 = 300;
+
+/// A back-of-record row, laid out label-left / value-right: the label, then
+/// enough spaces that the value's right edge lands near `right_px`, so the
+/// values line up in a column just left of the chevron. Padded with real spaces
+/// (the bar's text is a single left-aligned string; NBGL keeps interior runs of
+/// spaces), and the target is kept short of the text area so the row can never
+/// wrap. Measured with the SDK metrics so the column holds whatever the value.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+fn label_value_row(
+    label: &str,
+    value: &str,
+    font: ledger_secure_sdk_sys::nbgl_font_id_e,
+    right_px: u16,
+) -> String {
+    let measure = |s: &str| -> u16 {
+        let c = CString::new(s).unwrap_or_default();
+        unsafe { ledger_secure_sdk_sys::nbgl_getSingleLineTextWidth(font, c.as_ptr()) }
+    };
+    let space_w = measure("A A").saturating_sub(measure("AA")).max(1);
+    let min_gap = 2usize;
+    let base = format!("{}{}{}", label, " ".repeat(min_gap), value);
+    let base_w = measure(&base);
+    if base_w >= right_px {
+        return base;
+    }
+    let extra = ((right_px - base_w) / space_w) as usize;
+    format!("{}{}{}", label, " ".repeat(min_gap + extra), value)
+}
+
+/// Where the value column's right edge sits on the back-of-record rows: short
+/// of the ~372px text area (416 inner, less the chevron and its interval) so a
+/// padded row never wraps, and clear enough of the chevron to read as a column.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+const ROW_VALUE_RIGHT_PX: u16 = 344;
 
 /// Which record a card shows. A device holds a master, a pressing, or (rarely)
 /// both; the library row tapped selects which.
@@ -201,7 +281,7 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
         strings[strings.len() - 1].as_ptr()
     };
 
-    let info_details: ledger_secure_sdk_sys::nbgl_icon_details_t = (&INFO_ICON).into();
+    let chevron_details: ledger_secure_sdk_sys::nbgl_icon_details_t = (&CHEVRON_ICON).into();
     let mut pairs: Vec<nbgl_contentTagValue_t> = Vec::new();
 
     // "#N of M" everywhere the number is shown; the master plate is #0, its own
@@ -240,40 +320,38 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             );
         }
         Page::Back => {
-            // The back envelope: one info line per fact, each with its own (i)
-            // opening a sub-page. A top-right header button faults on tap in this
-            // raw-layout context, but a touchable bar (the library-row primitive)
-            // is sound, so every (i) is a touchable bar carrying the compiled
-            // circled-i glyph.
+            // The back envelope, as navigable "settings rows": one fact per row,
+            // its label on the left and value inlined toward the right, ending in
+            // a chevron that is the tap affordance into the fact's sub-page. The
+            // repeated left (i) is gone: the chevron carries the affordance.
             layout.header(cstr(String::from("Enclave Records")), core::ptr::null());
-            // Single-line rows only: a touchable bar with a sub-text is tall
-            // enough that four of them plus the header and split footer overrun
-            // the screen, so the two id values are inlined on their row rather
-            // than carried as a sub-text.
-            layout.touchable_bar(
-                &info_details,
-                cstr(number_line.clone()),
-                core::ptr::null(),
+            // Single-line rows only: a touchable bar tall enough to stack a value
+            // under its label overruns the screen once four rows sit above the
+            // header and split footer, so each row stays one line. The value is
+            // right-aligned into a column (see `label_value_row`); "Learn more"
+            // is an action row and carries no value.
+            let vfont = ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px;
+            layout.nav_row(
+                cstr(label_value_row("Number", &number_line, vfont, ROW_VALUE_RIGHT_PX)),
+                &chevron_details,
                 TOKEN_INFO_NUMBER,
             );
-            layout.touchable_bar(
-                &info_details,
-                cstr(format!("Edition ID   {}", card.edition_id)),
-                core::ptr::null(),
+            layout.nav_row(
+                cstr(label_value_row("Edition ID", &card.edition_id, vfont, ROW_VALUE_RIGHT_PX)),
+                &chevron_details,
                 TOKEN_INFO_EDITION,
             );
-            layout.touchable_bar(
-                &info_details,
-                cstr(format!("Collection ID   {}", card.collection_id)),
-                core::ptr::null(),
+            layout.nav_row(
+                cstr(label_value_row(
+                    "Collection ID",
+                    &card.collection_id,
+                    vfont,
+                    ROW_VALUE_RIGHT_PX,
+                )),
+                &chevron_details,
                 TOKEN_INFO_COLLECTION,
             );
-            layout.touchable_bar(
-                &info_details,
-                cstr(String::from("Learn more")),
-                core::ptr::null(),
-                TOKEN_LEARN_MORE,
-            );
+            layout.nav_row(cstr(String::from("Learn more")), &chevron_details, TOKEN_LEARN_MORE);
             layout.split_footer(
                 cstr(String::from("Back")),
                 TOKEN_BACK,
@@ -608,10 +686,23 @@ impl Library {
             if both {
                 let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
                 let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
+                let title_fit = fit_one_line(
+                    title,
+                    ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
+                    ROW_TITLE_MAX_PX,
+                );
+                // The list row's status is the compact "N of M left": with a
+                // thumbnail on its left, the hero's full "N of M left to press"
+                // would wrap to a second line and stack the rows too tall.
+                let row_status = if nvm.counter == 0 {
+                    String::from("Sold out")
+                } else {
+                    format!("{} of {} left", nvm.counter, nvm.edition)
+                };
                 layout.touchable_bar(
                     icon,
-                    cstr(String::from(title)),
-                    cstr(format!("Master record • {}", left)),
+                    cstr(title_fit),
+                    cstr(format!("Master record{}{}", ROW_SEP, row_status)),
                     TOKEN_MASTER,
                 );
             } else {
@@ -639,7 +730,12 @@ impl Library {
             if both {
                 let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
                 let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
-                layout.touchable_bar(icon, cstr(String::from(title)), cstr(status), TOKEN_PRESSING);
+                let title_fit = fit_one_line(
+                    title,
+                    ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
+                    ROW_TITLE_MAX_PX,
+                );
+                layout.touchable_bar(icon, cstr(title_fit), cstr(status), TOKEN_PRESSING);
             } else {
                 // A default pressing is not labelled "your copy": what the owner
                 // holds is simply the record, shown by title and its "#N of M".
@@ -785,6 +881,11 @@ pub fn handler_library_preview(command: Command<'_>, count: u8) -> Result<Comman
     let mut layout = Layout::new();
     layout.header(cstr(String::from("Enclave Records")), core::ptr::null());
 
+    // The row-0 (master) title may be overridden by the APDU data, so the
+    // capture harness can exercise the real album names and a deliberately long
+    // title against the single-line truncation. Empty data keeps the default.
+    let override_title = core::str::from_utf8(command.get_data()).ok().filter(|s| !s.is_empty());
+
     // Short, single-line titles and status lines: a row whose title or status
     // wraps to two lines is tall enough that three no longer clear the footer.
     let titles = ["Nocturne", "Monolith", "Discovery", "Homework", "Eclipse", "Transit"];
@@ -794,11 +895,20 @@ pub fn handler_library_preview(command: Command<'_>, count: u8) -> Result<Comman
         let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
         let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
         let sub = if i == 0 {
-            String::from("Master record • 5 left")
+            format!("Master record{}5 of 5 left", ROW_SEP)
         } else {
             format!("#{} of 12", i)
         };
-        layout.touchable_bar(icon, cstr(String::from(titles[i % titles.len()])), cstr(sub), TOKEN_PRESSING);
+        let raw_title = match (i, override_title) {
+            (0, Some(t)) => t,
+            _ => titles[i % titles.len()],
+        };
+        let title_fit = fit_one_line(
+            raw_title,
+            ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
+            ROW_TITLE_MAX_PX,
+        );
+        layout.touchable_bar(icon, cstr(title_fit), cstr(sub), TOKEN_PRESSING);
     }
     layout.footer(cstr(String::from("Quit")), TOKEN_QUIT);
     layout.draw();

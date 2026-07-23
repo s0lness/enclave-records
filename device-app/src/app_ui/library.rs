@@ -478,6 +478,33 @@ impl Layout {
         }
     }
 
+    /// A full-width tappable row carrying only a label and a right-hand chevron
+    /// (no left icon): the back-of-record "settings row". The chevron is the tap
+    /// affordance; NBGL right-aligns it and left-aligns the label, so a label
+    /// that embeds its value ("Edition ID   E2547431") reads as label-then-value
+    /// with the chevron at the end. Reports `token` when tapped.
+    pub fn nav_row(
+        &mut self,
+        text: *const core::ffi::c_char,
+        chevron: *const nbgl_icon_details_t,
+        token: u8,
+    ) {
+        let bar = nbgl_layoutBar_t {
+            iconLeft: ptr::null(),
+            text,
+            iconRight: chevron,
+            subText: ptr::null(),
+            large: false,
+            token,
+            inactive: false,
+            centered: false,
+            tuneId: 0,
+        };
+        unsafe {
+            nbgl_layoutAddTouchableBar(self.handle, &bar);
+        }
+    }
+
     /// A block of centered text with an optional smaller second line. Used for
     /// the empty state.
     pub fn text(&mut self, text: *const core::ffi::c_char, sub_text: *const core::ffi::c_char) {
