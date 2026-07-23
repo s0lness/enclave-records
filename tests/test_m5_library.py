@@ -60,12 +60,13 @@ def test_library_empty_state(device):
 
 def test_library_lists_the_master_after_cut(device):
     """After a cut the library redraws to show the record: title from the
-    certificate, plus the master status line in the new "#N / M" family."""
+    certificate, plus the master status lines."""
     p = Presse(device)
     p.cut(TITLE, EDITION)
     assert device.wait_for_text(TITLE), device.screen_texts()
-    # The hero's status lines: role ("Your master") over "N of M left to press".
-    assert device.wait_for_text("Your master"), device.screen_texts()
+    # The hero's status lines: the "Master record" role over "N of M left to
+    # press". Only the master carries a role label; a default pressing does not.
+    assert device.wait_for_text("Master record"), device.screen_texts()
     assert device.wait_for_text("5 of 5 left"), device.screen_texts()
 
 
@@ -110,33 +111,75 @@ def test_cut_confirmation_names_the_artist(device):
     assert split_sw(result["data"])[1] == SW_OK
 
 
-def test_back_of_record_shows_the_tag_fields(device):
-    """Page 2 (the back of the record) lists Copy / Artist / Edition ID, the
-    artist coming straight off the certificate. The album title is the hero of
-    page 1, so it is not repeated here (a third pair pushed Edition ID under the
-    footer)."""
+def test_front_of_card_shows_title_and_artist(device):
+    """The front of the card carries the title with the artist under it (the
+    artist coming straight off the certificate), over the big "#N" numeral."""
+    p = Presse(device)
+    p.cut(TITLE, EDITION, ARTIST)
+    assert device.wait_for_text(TITLE)
+    p.tap_text("Open")
+    assert device.wait_for_text("1 of 2"), device.screen_texts()  # on the card
+    assert device.wait_for_text(ARTIST), device.screen_texts()
+    p.tap_text("Back")
+
+
+def test_back_of_record_lists_the_envelope_info(device):
+    """The back of the record is the envelope info, one (i) row per fact: the
+    number ("#0 of 5" for a master), the Edition ID, the Collection ID, and a
+    Learn more row. No "Copy" tag, and the artist is not repeated here (it lives
+    on the front)."""
     p = Presse(device)
     p.cut(TITLE, EDITION, ARTIST)
     assert device.wait_for_text(TITLE)
     open_card_pages(device, p)
-    assert device.wait_for_text("Artist"), device.screen_texts()
-    assert device.wait_for_text(ARTIST), device.screen_texts()
+    assert device.wait_for_text("#0 of 5"), device.screen_texts()  # master is #0
     assert device.wait_for_text("Edition ID"), device.screen_texts()
+    assert device.wait_for_text("Collection ID"), device.screen_texts()
+    assert device.wait_for_text("Learn more"), device.screen_texts()
     p.tap_text("Back")
 
 
-def test_info_affordance_opens_authenticity(device):
-    """Tapping the Edition ID row (which carries the compiled circled-i glyph)
-    opens the authenticity page, and Back returns to the record."""
+def test_edition_id_info_opens_its_page(device):
+    """Tapping the Edition ID (i) row opens its sub-page: what it is and how to
+    verify it, through the artist's official channels. Back returns to the
+    record."""
     p = Presse(device)
     p.cut(TITLE, EDITION, ARTIST)
     assert device.wait_for_text(TITLE)
     open_card_pages(device, p)
     p.tap_text("Edition ID")  # the info affordance
+    assert device.wait_for_text("How to verify"), device.screen_texts()
+    assert device.wait_for_text("official channels"), device.screen_texts()
+    p.tap_text("Back")  # sub-page -> back of record
+    assert device.wait_for_text("Collection ID"), device.screen_texts()
+
+
+def test_collection_id_info_opens_its_page(device):
+    """Tapping the Collection ID (i) row opens its sub-page: the fingerprint of
+    the device that holds the record, and how to verify it."""
+    p = Presse(device)
+    p.cut(TITLE, EDITION, ARTIST)
+    assert device.wait_for_text(TITLE)
+    open_card_pages(device, p)
+    p.tap_text("Collection ID")
+    # The sub-page opened: it carries the "How to verify" guidance row.
+    assert device.wait_for_text("How to verify"), device.screen_texts()
+    p.tap_text("Back")
+    assert device.wait_for_text("Edition ID"), device.screen_texts()
+
+
+def test_learn_more_opens_the_model_limits(device):
+    """Learn more leaves the record for the model's limits: what the device can
+    and cannot prove. This is what used to sit on the authenticity page."""
+    p = Presse(device)
+    p.cut(TITLE, EDITION, ARTIST)
+    assert device.wait_for_text(TITLE)
+    open_card_pages(device, p)
+    p.tap_text("Learn more")
     assert device.wait_for_text("This device proves"), device.screen_texts()
     assert device.wait_for_text("It cannot prove"), device.screen_texts()
-    p.tap_text("Back")  # authenticity -> back of record
-    assert device.wait_for_text("Edition ID"), device.screen_texts()
+    p.tap_text("Back")
+    assert device.wait_for_text("Learn more"), device.screen_texts()
 
 
 # --- the library redraws only when it could have changed ----------------
@@ -157,15 +200,15 @@ def test_bulk_art_upload_leaves_the_library_intact(device):
     # The library still lists the record, unchanged, and the device is still
     # serving commands: the burst neither corrupted the screen nor wedged it.
     assert device.wait_for_text(TITLE), device.screen_texts()
-    assert device.wait_for_text("Your master"), device.screen_texts()
+    assert device.wait_for_text("Master record"), device.screen_texts()
     assert p.get_info()["title"] == TITLE
 
 
 def test_press_repaints_the_receiver_with_the_pressing(pair):
     """The receiver repaints its library only when the pressing lands. Carrying
     the sleeve across before PRESS_ACCEPT means that single repaint shows the
-    real, hash-verified cover. The pressing card then reads "#1 / 5" in the
-    library and "#1 of 5" on the back of the record."""
+    real, hash-verified cover. The pressing reads "#1 of 5" both in the library
+    and on the back of the record, with the artist on the front."""
     a, b = pair
     master, receiver = Presse(a), Presse(b)
 
@@ -176,15 +219,15 @@ def test_press_repaints_the_receiver_with_the_pressing(pair):
     confirm_sas_both(master, receiver)
     run_press(master, receiver, carry_from=master)
 
-    # B's library repainted on accept and now lists the pressing as "#1 / 5".
+    # B's library repainted on accept and now lists the pressing as "#1 of 5".
     assert b.wait_for_text(TITLE), b.screen_texts()
-    assert b.wait_for_text("#1 / 5"), b.screen_texts()
+    assert b.wait_for_text("#1 of 5"), b.screen_texts()
 
     thread, res = b.apdu_async_start(apdu_hex(INS_COLLECTION))
     assert b.wait_for_text("1 of 2"), b.screen_texts()  # the card
+    assert b.wait_for_text(ARTIST), b.screen_texts()    # artist on the front
     receiver.tap_text("1 of 2")  # pager -> back of record
     assert b.wait_for_text("#1 of 5"), b.screen_texts()
-    assert b.wait_for_text(ARTIST), b.screen_texts()
     receiver.tap_text("Back")
     thread.join(timeout=30)
     assert split_sw(res["data"])[1] == SW_OK

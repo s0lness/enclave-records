@@ -67,9 +67,9 @@ def test_full_ceremony_and_offline_verification(ceremony):
     thread, res = master.dev.apdu_async_start(apdu_hex(INS_COLLECTION))
     assert master.dev.wait_for_text("1 of 2")  # the card pager
     assert master.dev.wait_for_text(TITLE)
+    assert master.dev.wait_for_text(ARTIST)  # artist on the front of the card
     master.tap_text("1 of 2")  # pager -> back of record
-    assert master.dev.wait_for_text("Master plate of")
-    assert master.dev.wait_for_text(ARTIST)
+    assert master.dev.wait_for_text("#0 of 3")  # the master plate is #0
     assert master.dev.wait_for_text("Edition ID")
     master.tap_text("Back")
     thread.join(timeout=30)
@@ -78,9 +78,9 @@ def test_full_ceremony_and_offline_verification(ceremony):
     thread, res = receiver.dev.apdu_async_start(apdu_hex(INS_COLLECTION))
     assert receiver.dev.wait_for_text("1 of 2")
     assert receiver.dev.wait_for_text(TITLE)
+    assert receiver.dev.wait_for_text(ARTIST)  # artist on the front of the card
     receiver.tap_text("1 of 2")  # pager -> back of record
     assert receiver.dev.wait_for_text("#1 of 3")
-    assert receiver.dev.wait_for_text(ARTIST)
     assert receiver.dev.wait_for_text("Edition ID")
     receiver.tap_text("Back")
     thread.join(timeout=30)

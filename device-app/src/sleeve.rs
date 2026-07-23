@@ -91,13 +91,13 @@ const BAYER4: [[u8; 4]; 4] = [
     [15, 7, 13, 5],
 ];
 
-/// A 5x7 bitmap font for the record number's digits: five bits per row (bit 4 =
+/// A 5x7 bitmap font for the record numeral: five bits per row (bit 4 =
 /// leftmost column), seven rows top to bottom. These are proper numeral shapes
-/// (the `1` has a flag and a base, so it never reads as a bare bar or an `l`);
-/// no `#` is drawn, since a legible hash is not achievable at this size and a
-/// large numeral reads as the edition number on its own.
-fn digit_5x7(d: u8) -> [u8; 7] {
-    match d {
+/// (the `1` has a flag and a base, so it never reads as a bare bar or an `l`).
+/// Code `0..=9` is that digit; code `10` is the leading `#`, so the numeral
+/// reads as `#N` (a record number) rather than a bare count.
+fn glyph_5x7(c: u8) -> [u8; 7] {
+    match c {
         0 => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
         1 => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
         2 => [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
@@ -108,6 +108,8 @@ fn digit_5x7(d: u8) -> [u8; 7] {
         7 => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
         8 => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
         9 => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+        // '#': the octothorpe that marks a record number.
+        10 => [0b01010, 0b11111, 0b01010, 0b01010, 0b11111, 0b01010, 0b00000],
         _ => [0; 7],
     }
 }
@@ -156,12 +158,20 @@ fn cover_black(src: &Cover, n: usize, x: usize, y: usize) -> bool {
     !white
 }
 
-/// Draw the edition number (the numeral alone, no ambiguous '#') into the left
-/// column of the card from the 5x7 font, each cell scaled to a solid block,
-/// vertically centred against the cover. The cell scale shrinks as the digit
-/// count grows so the number always stays inside the column.
+/// Draw the record numeral `#N` into the left column of the card from the 5x7
+/// font, each cell scaled to a solid block, vertically centred against the
+/// cover. A leading `#` glyph precedes the digits. The cell scale shrinks as the
+/// glyph count grows so the numeral always stays inside the column, down to a
+/// four-digit edition (`#1000`).
 fn draw_number(buf: &mut [u8], w: usize, h: usize, col_w: usize, cover_h: usize, number: u16) {
-    let mut digits = [0u8; 3];
+    // Glyph codes, most-significant first: a leading '#' (code 10) then the
+    // decimal digits. Up to five digits covers the whole u16 range.
+    let mut glyphs = [0u8; 6];
+    let mut ng = 0usize;
+    glyphs[ng] = 10; // '#'
+    ng += 1;
+
+    let mut digits = [0u8; 5];
     let mut nd = 0usize;
     let mut v = number;
     if v == 0 {
@@ -173,21 +183,25 @@ fn draw_number(buf: &mut [u8], w: usize, h: usize, col_w: usize, cover_h: usize,
         nd += 1;
         v /= 10;
     }
-    // digits[] holds least-significant first; render most-significant first.
+    // digits[] holds least-significant first; append most-significant first.
+    for i in 0..nd {
+        glyphs[ng] = digits[nd - 1 - i];
+        ng += 1;
+    }
 
     let margin = 6usize;
     let usable = col_w.saturating_sub(2 * margin);
-    // Each glyph is 5 cells wide; digits are separated by one cell of space.
-    let cells_wide = nd * 5 + (nd - 1);
+    // Each glyph is 5 cells wide; glyphs are separated by one cell of space.
+    let cells_wide = ng * 5 + (ng - 1);
     let scale = (usable / cells_wide).min(cover_h.saturating_sub(24) / 7).max(1);
     let glyph_w = 5 * scale;
     let gap = scale;
-    let total_w = nd * glyph_w + (nd - 1) * gap;
+    let total_w = ng * glyph_w + (ng - 1) * gap;
     let start_x = col_w.saturating_sub(total_w) / 2;
     let start_y = (cover_h - 7 * scale) / 2;
 
-    for i in 0..nd {
-        let rows = digit_5x7(digits[nd - 1 - i]);
+    for (i, &code) in glyphs.iter().take(ng).enumerate() {
+        let rows = glyph_5x7(code);
         let gx = start_x + i * (glyph_w + gap);
         for (r, bits) in rows.iter().enumerate() {
             for c in 0..5 {

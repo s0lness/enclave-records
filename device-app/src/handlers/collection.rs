@@ -51,6 +51,16 @@ fn edition_id(albpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, AppSW>
     Ok(fingerprint_str(&fp))
 }
 
+/// The first 8 hex chars of SHA256(devpub): the device's public identity, shown
+/// as "Collection ID" (the collection that physically holds this record). The
+/// same fingerprint a press is addressed to ("For device ...").
+fn collection_id(devpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, AppSW> {
+    let hash = crate::crypto::sha256(&[devpub])?;
+    let mut fp = [0u8; 4];
+    fp.copy_from_slice(&hash[..4]);
+    Ok(fingerprint_str(&fp))
+}
+
 /// Whether the stored NVM sleeve is the one the album signature commits to.
 /// Same rule as [`album_sleeve`], but returns only the verdict so the card can
 /// pick its cover source without a heap copy.
@@ -91,6 +101,9 @@ struct CardData {
     /// The copy number for a pressing; `None` for a master (a plate, not a copy).
     number: Option<u16>,
     edition_id: String,
+    /// The fingerprint of the device holding this record, shown as the
+    /// "Collection ID" on the back of the card.
+    collection_id: String,
     /// The album id, used to generate the fallback cover when no verified
     /// sleeve is stored.
     album_id: [u8; 32],
@@ -116,6 +129,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 edition: nvm.edition,
                 number: None,
                 edition_id: edition_id(&nvm.alb_pub)?,
+                collection_id: collection_id(&nvm.dev_pub)?,
                 album_id: id,
                 sleeve_verified: sleeve_verified(&sleeve_hash),
             }))
@@ -129,6 +143,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 edition: pressing.edition,
                 number: Some(pressing.number),
                 edition_id: edition_id(&album.albpub)?,
+                collection_id: collection_id(&nvm.dev_pub)?,
                 album_id: pressing.album_id,
                 sleeve_verified: sleeve_verified(&album.sleeve_hash),
             }))
@@ -140,9 +155,19 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
+    /// The cover, with the big `#N` numeral and the title + artist.
     Card,
+    /// The back-envelope info: the number, the Edition ID, the Collection ID,
+    /// and a "Learn more" row, each opening a sub-page.
     Back,
-    Auth,
+    /// "#N of M", explained: what the numbering means and the sealed counter.
+    InfoNumber,
+    /// The Edition ID, explained: what it is and how to confirm it.
+    InfoEdition,
+    /// The Collection ID, explained: the device that holds the record.
+    InfoCollection,
+    /// The limits of the model: what the device can and cannot prove.
+    LearnMore,
 }
 
 /// Build one tag/value pair with zeroed options (no value icon, no extension).
@@ -163,7 +188,8 @@ fn pair(
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit, AppSW> {
     use crate::app_ui::library::{
-        run_event_loop, Layout, ScreenArena, TOKEN_BACK, TOKEN_INFO, TOKEN_PAGER,
+        pager_label, run_event_loop, Layout, ScreenArena, TOKEN_BACK, TOKEN_INFO_COLLECTION,
+        TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER, TOKEN_LEARN_MORE, TOKEN_PAGER,
     };
     use ledger_secure_sdk_sys::nbgl_contentTagValue_t;
 
@@ -178,6 +204,13 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
     let info_details: ledger_secure_sdk_sys::nbgl_icon_details_t = (&INFO_ICON).into();
     let mut pairs: Vec<nbgl_contentTagValue_t> = Vec::new();
 
+    // "#N of M" everywhere the number is shown; the master plate is #0, its own
+    // marker in the same numbering as the copies it presses.
+    let number_line = match card.number {
+        Some(n) => format!("#{} of {}", n, card.edition),
+        None => format!("#0 of {}", card.edition),
+    };
+
     let mut layout = Layout::new();
 
     match page {
@@ -188,72 +221,138 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             } else {
                 crate::sleeve::Cover::Fallback(card.album_id)
             };
-            let (bmp, w, h) = crate::sleeve::record_card(&cover, crate::state::ART_W, card.number);
+            // The master shows a big "#0"; a pressing shows its own "#N".
+            let numeral = Some(card.number.unwrap_or(0));
+            let (bmp, w, h) = crate::sleeve::record_card(&cover, crate::state::ART_W, numeral);
             let icon = arena.icon(bmp, w, h, ledger_secure_sdk_sys::NBGL_BPP_1);
-            layout.centered_info(
-                icon,
-                cstr(card.title.clone()),
-                core::ptr::null(),
-                core::ptr::null(),
-                0,
-            );
+            // The artist sits under the title on the front of the card.
+            let artist = if card.artist.is_empty() {
+                core::ptr::null()
+            } else {
+                cstr(card.artist.clone())
+            };
+            layout.centered_info(icon, cstr(card.title.clone()), artist, core::ptr::null(), 0);
             layout.split_footer(
                 cstr(String::from("Back")),
                 TOKEN_BACK,
-                cstr(String::from("< 1 of 2 >")),
+                cstr(pager_label(1)),
                 TOKEN_PAGER,
             );
         }
         Page::Back => {
+            // The back envelope: one info line per fact, each with its own (i)
+            // opening a sub-page. A top-right header button faults on tap in this
+            // raw-layout context, but a touchable bar (the library-row primitive)
+            // is sound, so every (i) is a touchable bar carrying the compiled
+            // circled-i glyph.
             layout.header(cstr(String::from("Enclave Records")), core::ptr::null());
-            let copy_value = match card.number {
-                Some(n) => format!("#{} of {}", n, card.edition),
-                None => format!("Master plate of {}", card.edition),
-            };
-            pairs.push(pair(cstr(String::from("Copy")), cstr(copy_value)));
-            let artist = if card.artist.is_empty() {
-                String::from("Unknown artist")
-            } else {
-                card.artist.clone()
-            };
-            pairs.push(pair(cstr(String::from("Artist")), cstr(artist)));
-            // The album title is the hero of page 1; repeating it here as a third
-            // pair pushed the Edition ID row under the footer. Two pairs plus the
-            // Edition ID bar clear the split footer with margin to spare.
-            layout.tag_value_list(&pairs);
-            // The Edition ID gets its own touchable row carrying the compiled
-            // (i) glyph: tapping it opens the authenticity page. A top-right
-            // header button faults on tap in this raw-layout context, but a
-            // touchable bar (the same primitive the library rows use) is sound.
+            // Single-line rows only: a touchable bar with a sub-text is tall
+            // enough that four of them plus the header and split footer overrun
+            // the screen, so the two id values are inlined on their row rather
+            // than carried as a sub-text.
             layout.touchable_bar(
                 &info_details,
-                cstr(String::from("Edition ID")),
-                cstr(card.edition_id.clone()),
-                TOKEN_INFO,
+                cstr(number_line.clone()),
+                core::ptr::null(),
+                TOKEN_INFO_NUMBER,
+            );
+            layout.touchable_bar(
+                &info_details,
+                cstr(format!("Edition ID   {}", card.edition_id)),
+                core::ptr::null(),
+                TOKEN_INFO_EDITION,
+            );
+            layout.touchable_bar(
+                &info_details,
+                cstr(format!("Collection ID   {}", card.collection_id)),
+                core::ptr::null(),
+                TOKEN_INFO_COLLECTION,
+            );
+            layout.touchable_bar(
+                &info_details,
+                cstr(String::from("Learn more")),
+                core::ptr::null(),
+                TOKEN_LEARN_MORE,
             );
             layout.split_footer(
                 cstr(String::from("Back")),
                 TOKEN_BACK,
-                cstr(String::from("< 2 of 2 >")),
+                cstr(pager_label(2)),
                 TOKEN_PAGER,
             );
         }
-        Page::Auth => {
-            layout.header(cstr(String::from("Authenticity")), core::ptr::null());
-            // Both variants must wrap to two lines: a three-line proof pushes the
-            // "Check the Edition ID" value under the footer (measured on Flex).
-            let proven = match card.number {
-                Some(n) => format!("Copy #{} of edition {}: genuine artwork, bound to this device", n, card.edition),
-                None => format!("Master of edition {}: genuine artwork, bound to this device", card.edition),
+        Page::InfoNumber => {
+            layout.header(cstr(String::from("The number")), core::ptr::null());
+            let meaning = match card.number {
+                Some(_) => format!(
+                    "One of {} numbered copies. The master plate is #0; copies run #1 to #{}.",
+                    card.edition, card.edition
+                ),
+                None => format!(
+                    "The master plate, numbered #0. It presses the copies #1 to #{}.",
+                    card.edition
+                ),
             };
-            pairs.push(pair(cstr(String::from("This device proves")), cstr(proven)));
+            pairs.push(pair(cstr(number_line.clone()), cstr(meaning)));
             pairs.push(pair(
-                cstr(String::from("It cannot prove")),
-                cstr(String::from("The album key may not be the real artist's own")),
+                cstr(String::from("Sealed in silicon")),
+                cstr(format!(
+                    "A counter inside the chip fixes the edition at {} and only counts down.",
+                    card.edition
+                )),
+            ));
+            layout.tag_value_list(&pairs);
+            layout.footer(cstr(String::from("Back")), TOKEN_BACK);
+        }
+        Page::InfoEdition => {
+            layout.header(cstr(String::from("Edition ID")), core::ptr::null());
+            pairs.push(pair(
+                cstr(card.edition_id.clone()),
+                cstr(String::from(
+                    "A fingerprint of the album key, the same on every copy of this edition.",
+                )),
             ));
             pairs.push(pair(
-                cstr(String::from("Check the Edition ID")),
-                cstr(format!("Confirm {} on the artist's channel", card.edition_id)),
+                cstr(String::from("How to verify")),
+                cstr(format!(
+                    "Confirm {} through the artist's official channels.",
+                    card.edition_id
+                )),
+            ));
+            layout.tag_value_list(&pairs);
+            layout.footer(cstr(String::from("Back")), TOKEN_BACK);
+        }
+        Page::InfoCollection => {
+            layout.header(cstr(String::from("Collection ID")), core::ptr::null());
+            pairs.push(pair(
+                cstr(card.collection_id.clone()),
+                cstr(String::from(
+                    "The fingerprint of this device, the collection that holds the record.",
+                )),
+            ));
+            pairs.push(pair(
+                cstr(String::from("How to verify")),
+                cstr(format!(
+                    "Compare {} with the device you expect to hold it.",
+                    card.collection_id
+                )),
+            ));
+            layout.tag_value_list(&pairs);
+            layout.footer(cstr(String::from("Back")), TOKEN_BACK);
+        }
+        Page::LearnMore => {
+            layout.header(cstr(String::from("Learn more")), core::ptr::null());
+            pairs.push(pair(
+                cstr(String::from("This device proves")),
+                cstr(String::from(
+                    "Genuine artwork from this edition, bound to this device.",
+                )),
+            ));
+            pairs.push(pair(
+                cstr(String::from("It cannot prove")),
+                cstr(String::from(
+                    "That the album key is the real artist's. Check the Edition ID.",
+                )),
             ));
             layout.tag_value_list(&pairs);
             layout.footer(cstr(String::from("Back")), TOKEN_BACK);
@@ -265,12 +364,15 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
     Ok(run_event_loop())
 }
 
-/// Show a record's card: page 1 the cover with its "#N" and reflection, page 2
-/// the back-of-record fields, and (from the back's info affordance) the
-/// authenticity page. Blocks until "Back" from the card, or an incoming APDU.
+/// Show a record's card: the cover with its "#N" and the title + artist, the
+/// back-envelope info list, and the four sub-pages reached from its (i) rows.
+/// Blocks until "Back" from the card or the back, or an incoming APDU.
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 pub fn show_record_card(kind: RecordKind) -> Result<(), AppSW> {
-    use crate::app_ui::library::{Exit, Layout, TOKEN_BACK};
+    use crate::app_ui::library::{
+        Exit, Layout, TOKEN_BACK, TOKEN_INFO_COLLECTION, TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER,
+        TOKEN_LEARN_MORE, TOKEN_PAGER,
+    };
 
     let Some(card) = gather_card(kind)? else {
         // Empty: a single page with a Back footer.
@@ -281,7 +383,7 @@ pub fn show_record_card(kind: RecordKind) -> Result<(), AppSW> {
         };
         let mut layout = Layout::new();
         layout.header(cstr("Enclave Records"), core::ptr::null());
-        layout.text(cstr("Empty"), cstr("Cut a master or receive a pressing."));
+        layout.text(cstr("No records yet"), cstr("Cut a master or receive a pressing."));
         layout.footer(cstr("Back"), TOKEN_BACK);
         layout.draw();
         drop(cstr);
@@ -289,16 +391,36 @@ pub fn show_record_card(kind: RecordKind) -> Result<(), AppSW> {
         return Ok(());
     };
 
+    card_loop(&card)
+}
+
+/// The card's page state machine: front <-> back through the pager, each back
+/// (i) row opening its sub-page, Back leaving the card. Shared by the live card
+/// and the development card-preview probe.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+fn card_loop(card: &CardData) -> Result<(), AppSW> {
+    use crate::app_ui::library::{
+        Exit, TOKEN_BACK, TOKEN_INFO_COLLECTION, TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER,
+        TOKEN_LEARN_MORE, TOKEN_PAGER,
+    };
+
     let mut page = Page::Card;
     loop {
-        match draw_page(&card, page)? {
+        match draw_page(card, page)? {
             Exit::Apdu => return Ok(()),
             Exit::Touched(TOKEN_BACK) => match page {
-                Page::Auth => page = Page::Back,
+                // Back from a sub-page returns to the back envelope; Back from
+                // the card or the back leaves for the library.
+                Page::InfoNumber | Page::InfoEdition | Page::InfoCollection | Page::LearnMore => {
+                    page = Page::Back
+                }
                 _ => return Ok(()),
             },
-            Exit::Touched(crate::app_ui::library::TOKEN_INFO) => page = Page::Auth,
-            Exit::Touched(crate::app_ui::library::TOKEN_PAGER) => {
+            Exit::Touched(TOKEN_INFO_NUMBER) => page = Page::InfoNumber,
+            Exit::Touched(TOKEN_INFO_EDITION) => page = Page::InfoEdition,
+            Exit::Touched(TOKEN_INFO_COLLECTION) => page = Page::InfoCollection,
+            Exit::Touched(TOKEN_LEARN_MORE) => page = Page::LearnMore,
+            Exit::Touched(TOKEN_PAGER) => {
                 page = if page == Page::Card { Page::Back } else { Page::Card };
             }
             _ => {}
@@ -342,7 +464,9 @@ pub fn show_collection_screen() -> Result<(), AppSW> {
         values_m.push(String::from(title_str(&nvm.title, nvm.title_len)?));
         names_m.push(String::from("Artist"));
         values_m.push(String::from(title_str(&artist_buf, artist_len)?));
-        names_m.push(String::from("Still to press"));
+        names_m.push(String::from("Number"));
+        values_m.push(format!("#0 of {}", nvm.edition));
+        names_m.push(String::from("Left to press"));
         values_m.push(format!("{} of {}", nvm.counter, nvm.edition));
         let pressed = (nvm.edition - nvm.counter) as usize;
         for entry in nvm.pressed_log.iter().take(pressed.min(PRESSED_LOG_LEN)) {
@@ -363,7 +487,7 @@ pub fn show_collection_screen() -> Result<(), AppSW> {
         values_h.push(String::from(title_str(&album.title, album.title_len)?));
         names_h.push(String::from("Artist"));
         values_h.push(String::from(title_str(&album.artist, album.artist_len)?));
-        names_h.push(String::from("Copy"));
+        names_h.push(String::from("Number"));
         values_h.push(format!("#{} of {}", pressing.number, pressing.edition));
         names_h.push(String::from("Edition ID"));
         values_h.push(edition_id(&album.albpub)?);
@@ -371,8 +495,8 @@ pub fn show_collection_screen() -> Result<(), AppSW> {
     }
 
     if !any {
-        names_m.push(String::from("Collection"));
-        values_m.push(String::from("Empty. Cut a master or receive a pressing."));
+        names_m.push(String::from("No records yet"));
+        values_m.push(String::from("Cut a master or receive a pressing."));
         review = review.add_content(fields_page(&names_m, &values_m));
     }
 
@@ -403,7 +527,7 @@ pub fn handler_collection(command: Command<'_>) -> Result<CommandResponse<'_>, A
 pub enum LibraryAction {
     /// An APDU arrived: leave the screen so the main loop can serve it.
     Apdu,
-    /// The "Quitter" footer: exit the app, like the standard home does.
+    /// The "Quit" footer: exit the app, like the standard home does.
     Quit,
     /// A record row was tapped; open its card.
     OpenMaster,
@@ -414,7 +538,7 @@ pub enum LibraryAction {
 
 /// The library: the app's landing screen. An iTunes-style list of the records
 /// this device holds, each row a decimated sleeve with its title and status,
-/// over a "Quitter" footer that really exits.
+/// over a "Quit" footer that really exits.
 ///
 /// A drawn library, kept alive between APDUs. NBGL keeps raw pointers into the
 /// layout's strings and bitmaps, so the arena and string store must outlive the
@@ -487,15 +611,18 @@ impl Library {
                 layout.touchable_bar(
                     icon,
                     cstr(String::from(title)),
-                    cstr(format!("Your master, {}", left)),
+                    cstr(format!("Master record • {}", left)),
                     TOKEN_MASTER,
                 );
             } else {
+                // The master is the one record that carries a role label: it is
+                // the plate, not a default copy. A default pressing goes
+                // unlabelled (see below).
                 let icon = hero_cover(&mut arena, canonical);
                 layout.centered_info(
                     icon,
                     cstr(String::from(title)),
-                    cstr(String::from("Your master")),
+                    cstr(String::from("Master record")),
                     cstr(left),
                     0,
                 );
@@ -508,18 +635,20 @@ impl Library {
             let title = title_str(&album.title, album.title_len)?;
             let pressing = crate::certs::parse_pressing_cert(&nvm.pressing_cert, &album.albpub)?;
             let canonical = album_sleeve(&album.sleeve_hash, &pressing.album_id);
-            let status = format!("#{} / {}", pressing.number, pressing.edition);
+            let status = format!("#{} of {}", pressing.number, pressing.edition);
             if both {
                 let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
                 let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
                 layout.touchable_bar(icon, cstr(String::from(title)), cstr(status), TOKEN_PRESSING);
             } else {
+                // A default pressing is not labelled "your copy": what the owner
+                // holds is simply the record, shown by title and its "#N of M".
                 let icon = hero_cover(&mut arena, canonical);
                 layout.centered_info(
                     icon,
                     cstr(String::from(title)),
-                    cstr(String::from("Your copy")),
                     cstr(status),
+                    core::ptr::null(),
                     0,
                 );
             }
@@ -535,16 +664,16 @@ impl Library {
 
         // The hero (a single record) opens through an explicit "Open" in the
         // footer; the two-row list opens through the rows themselves, so it keeps
-        // a plain "Quitter" footer.
+        // a plain "Quit" footer.
         if has_any && !both {
             layout.split_footer(
-                cstr(String::from("Quitter")),
+                cstr(String::from("Quit")),
                 TOKEN_QUIT,
                 cstr(String::from("Open")),
                 hero_token,
             );
         } else {
-            layout.footer(cstr(String::from("Quitter")), TOKEN_QUIT);
+            layout.footer(cstr(String::from("Quit")), TOKEN_QUIT);
         }
         layout.draw();
 
@@ -626,6 +755,86 @@ pub fn handler_art_test(command: Command<'_>, stage: u8) -> Result<CommandRespon
         screen.draw();
         let _ = run_event_loop();
     }
+
+    let response = command.into_response();
+    Ok(response)
+}
+
+/// LIBRARY_PREVIEW: a development probe that draws the library as a list of `P1`
+/// synthetic rows. The NVM data model holds at most one master and one pressing,
+/// so a three-or-more-record library never occurs in production; this renders
+/// one through the same touchable-bar list the two-record library uses, so the
+/// list layout can be verified (and captured for the film) at three rows and up.
+/// Draws nothing that touches or changes NVM.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+pub fn handler_library_preview(command: Command<'_>, count: u8) -> Result<CommandResponse<'_>, AppSW> {
+    use crate::app_ui::library::{run_event_loop, Layout, ScreenArena, TOKEN_PRESSING, TOKEN_QUIT};
+
+    let n = crate::state::ART_W;
+    let half = n / 2;
+    let rows = (count as usize).clamp(1, 6);
+
+    let mut arena = ScreenArena::new();
+    let mut strings: Vec<CString> = Vec::new();
+    let mut cstr = |s: String| -> *const core::ffi::c_char {
+        let owned = CString::new(s.replace('\0', " ")).unwrap_or_default();
+        strings.push(owned);
+        strings[strings.len() - 1].as_ptr()
+    };
+
+    let mut layout = Layout::new();
+    layout.header(cstr(String::from("Enclave Records")), core::ptr::null());
+
+    // Short, single-line titles and status lines: a row whose title or status
+    // wraps to two lines is tall enough that three no longer clear the footer.
+    let titles = ["Nocturne", "Monolith", "Discovery", "Homework", "Eclipse", "Transit"];
+    for i in 0..rows {
+        let album_id = [((i as u8).wrapping_mul(53)).wrapping_add(7); 32];
+        let canonical = crate::sleeve::fallback_sleeve(n, &album_id);
+        let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
+        let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
+        let sub = if i == 0 {
+            String::from("Master record • 5 left")
+        } else {
+            format!("#{} of 12", i)
+        };
+        layout.touchable_bar(icon, cstr(String::from(titles[i % titles.len()])), cstr(sub), TOKEN_PRESSING);
+    }
+    layout.footer(cstr(String::from("Quit")), TOKEN_QUIT);
+    layout.draw();
+    drop(cstr);
+    let _ = run_event_loop();
+
+    let response = command.into_response();
+    Ok(response)
+}
+
+/// CARD_PREVIEW: a development probe that renders the record card for an
+/// arbitrary `number`/`edition` (data = number(2 LE) || edition(2 LE)) over a
+/// synthetic cover. A pressing numbered `#1000 of 1000` is unreachable by
+/// ceremony (it would take 999 real presses), so this is how the large-number
+/// layout is verified and captured. Touches no NVM.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>, AppSW> {
+    let data = command.get_data();
+    if data.len() != 4 {
+        return Err(AppSW::WrongApduLength);
+    }
+    let number = u16::from_le_bytes([data[0], data[1]]);
+    let edition = u16::from_le_bytes([data[2], data[3]]);
+
+    let card = CardData {
+        title: String::from("Random Access Memories"),
+        artist: String::from("Daft Punk"),
+        edition,
+        // number 0 renders the master (#0); any other renders that pressing.
+        number: if number == 0 { None } else { Some(number) },
+        edition_id: String::from("A1B2C3D4"),
+        collection_id: String::from("3FC2A9B1"),
+        album_id: [0x42u8; 32],
+        sleeve_verified: false,
+    };
+    card_loop(&card)?;
 
     let response = command.into_response();
     Ok(response)

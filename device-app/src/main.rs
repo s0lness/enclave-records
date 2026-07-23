@@ -84,6 +84,8 @@ pub enum Instruction {
     GetInfo,
     Collection,
     ArtTest { stage: u8 },
+    LibraryPreview { count: u8 },
+    CardPreview,
     SetArt,
     GetArt { chunk: u8 },
     Cut,
@@ -110,6 +112,8 @@ impl TryFrom<ApduHeader> for Instruction {
             (0x01, 0, 0) => Ok(Instruction::GetInfo),
             (0x02, 0, 0) => Ok(Instruction::Collection),
             (0x61, stage, 0) => Ok(Instruction::ArtTest { stage }),
+            (0x63, count, 0) => Ok(Instruction::LibraryPreview { count }),
+            (0x65, 0, 0) => Ok(Instruction::CardPreview),
             (0x62, 0, 0) => Ok(Instruction::SetArt),
             (0x64, chunk, 0) => Ok(Instruction::GetArt { chunk }),
             (0x10, 0, 0) => Ok(Instruction::Cut),
@@ -126,7 +130,7 @@ impl TryFrom<ApduHeader> for Instruction {
             (0x40, part @ (0 | 1), 0) => Ok(Instruction::GetBundle { part }),
             (0x41, 0, 0) => Ok(Instruction::Challenge),
             (0x50, 0, 0) => Ok(Instruction::ResetMaster),
-            (0x01 | 0x02 | 0x10 | 0x21..=0x25 | 0x30..=0x34 | 0x40 | 0x41 | 0x50 | 0x61 | 0x62 | 0x64, _, _) => {
+            (0x01 | 0x02 | 0x10 | 0x21..=0x25 | 0x30..=0x34 | 0x40 | 0x41 | 0x50 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65, _, _) => {
                 Err(AppSW::WrongP1P2)
             }
             (_, _, _) => Err(AppSW::InsNotSupported),
@@ -169,6 +173,8 @@ fn warrants_library_redraw(ins: Instruction) -> bool {
             | Instruction::PairSas
             | Instruction::Collection
             | Instruction::ArtTest { .. }
+            | Instruction::LibraryPreview { .. }
+            | Instruction::CardPreview
     )
 }
 
@@ -300,6 +306,10 @@ fn handle_apdu<'a>(
         Instruction::GetInfo => handlers::info::handler_get_info(command),
         Instruction::Collection => handlers::collection::handler_collection(command),
         Instruction::ArtTest { stage } => handlers::collection::handler_art_test(command, stage),
+        Instruction::LibraryPreview { count } => {
+            handlers::collection::handler_library_preview(command, count)
+        }
+        Instruction::CardPreview => handlers::collection::handler_card_preview(command),
         Instruction::SetArt => handlers::art::handler_set_art(command),
         Instruction::GetArt { chunk } => handlers::art::handler_get_art(command, chunk),
         Instruction::Cut => handlers::cut::handler_cut(command),

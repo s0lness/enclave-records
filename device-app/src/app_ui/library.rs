@@ -360,12 +360,26 @@ unsafe extern "C" fn layout_touch_callback(token: core::ffi::c_int, _index: u8) 
 /// never collide with the control tokens below.
 pub const TOKEN_MASTER: u8 = 0;
 pub const TOKEN_PRESSING: u8 = 1;
+/// Back-envelope (i) rows, one per fact, each opening its own sub-page. Kept
+/// clear of both the row range below and the control range above.
+pub const TOKEN_INFO_NUMBER: u8 = 240;
+pub const TOKEN_INFO_EDITION: u8 = 241;
+pub const TOKEN_INFO_COLLECTION: u8 = 242;
+pub const TOKEN_LEARN_MORE: u8 = 243;
 /// Control tokens, kept well clear of the row range.
 pub const TOKEN_INFO: u8 = 250;
 pub const TOKEN_QUIT: u8 = 251;
 /// Record-card controls: "Back" (footer left) and the pager (footer right).
 pub const TOKEN_BACK: u8 = 252;
 pub const TOKEN_PAGER: u8 = 253;
+
+/// The record card's page pager as a generated label, e.g. "< 1 of 2 >". The
+/// card is a two-page front/back, so the total is fixed at 2; the current page
+/// index is the only variable. No literal pager strings live in the pages.
+pub const CARD_PAGES: u8 = 2;
+pub fn pager_label(page: u8) -> alloc::string::String {
+    alloc::format!("< {} of {} >", page, CARD_PAGES)
+}
 
 /// A screen built through the app-side `nbgl_layout` API.
 ///

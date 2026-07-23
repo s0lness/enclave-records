@@ -22,7 +22,7 @@ def test_device_identity_is_stable(device):
 def test_collection_empty(device):
     p = Presse(device)
     thread, result = device.apdu_async_start(apdu_hex(INS_COLLECTION))
-    assert device.wait_for_text("Empty"), device.screen_texts()
+    assert device.wait_for_text("No records yet"), device.screen_texts()
     p.tap_text("Back")
     thread.join(timeout=30)
     assert split_sw(result["data"])[1] == SW_OK
