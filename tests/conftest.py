@@ -10,6 +10,11 @@ APP_ELF = os.environ.get(
     "/mnt/c/Users/sylve/projects/presse/device-app/target/flex/release/app-boilerplate-rust",
 )
 
+# API ports are overridable so a run can dodge a Speculos already bound to the
+# defaults (e.g. a persistent emu-up, or another worktree's suite in parallel).
+PORT_A = int(os.environ.get("SPECULOS_PORT_A", "5001"))
+PORT_B = int(os.environ.get("SPECULOS_PORT_B", "5002"))
+
 
 class SpeculosDevice:
     """One Speculos instance driven over its REST API. Deliberately not Ragger:
@@ -98,15 +103,15 @@ class SpeculosDevice:
 
 @pytest.fixture
 def device():
-    d = SpeculosDevice("solo", 5001)
+    d = SpeculosDevice("solo", PORT_A)
     yield d
     d.stop()
 
 
 @pytest.fixture
 def pair():
-    a = SpeculosDevice("alpha", 5001)
-    b = SpeculosDevice("beta", 5002)
+    a = SpeculosDevice("alpha", PORT_A)
+    b = SpeculosDevice("beta", PORT_B)
     yield a, b
     a.stop()
     b.stop()

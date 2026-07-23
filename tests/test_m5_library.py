@@ -34,9 +34,10 @@ EDITION = 5
 
 
 def open_card_pages(dev, p):
-    """From the library, tap the record row, then walk card -> back -> auth.
-    Returns after leaving the auth page on the back-of-record page."""
-    p.tap_text(TITLE)
+    """From the library, open the record via its "Open" footer, then walk
+    card -> back of record. The single-record library is a centered hero whose
+    footer opens the card; only a two-record library uses tappable rows."""
+    p.tap_text("Open")
     assert dev.wait_for_text("1 of 2"), dev.screen_texts()  # the card pager
     p.tap_text("1 of 2")  # pager -> back of record
     assert dev.wait_for_text("Edition ID"), dev.screen_texts()
@@ -63,22 +64,22 @@ def test_library_lists_the_master_after_cut(device):
     p = Presse(device)
     p.cut(TITLE, EDITION)
     assert device.wait_for_text(TITLE), device.screen_texts()
-    # The master's own row: "Your master · N of M left" (drops "on this device").
+    # The hero's status lines: role ("Your master") over "N of M left to press".
     assert device.wait_for_text("Your master"), device.screen_texts()
     assert device.wait_for_text("5 of 5 left"), device.screen_texts()
 
 
-def test_tapping_a_row_opens_the_record_card(device):
-    """Tapping the record row opens its card (page 1 of 2, with the pager
-    chevrons from the generic-review-style footer), and Back returns."""
+def test_opening_the_record_opens_the_card(device):
+    """Opening the record (via the hero library's "Open" footer) shows its card
+    (page 1 of 2, with the pager chevrons), and Back returns to the library."""
     p = Presse(device)
     p.cut(TITLE, EDITION)
     assert device.wait_for_text(TITLE)
-    p.tap_text(TITLE)
+    p.tap_text("Open")
     # The card is page 1 of 2: the pager chevrons show.
     assert device.wait_for_text("1 of 2"), device.screen_texts()
     p.tap_text("Back")
-    # Back on the library: the row is shown again.
+    # Back on the library: the record is shown again.
     assert device.wait_for_text(TITLE), device.screen_texts()
 
 
@@ -91,7 +92,7 @@ def test_record_title_comes_from_the_certificate(device):
     _, cert_title, cert_artist, _, _, _, _ = parse_album_cert(album_cert)
     assert cert_title == TITLE
     assert cert_artist == ARTIST
-    p.tap_text(TITLE)
+    p.tap_text("Open")
     assert device.wait_for_text(TITLE), device.screen_texts()
     p.tap_text("Back")
 
@@ -110,15 +111,16 @@ def test_cut_confirmation_names_the_artist(device):
 
 
 def test_back_of_record_shows_the_tag_fields(device):
-    """Page 2 (the back of the record) lists Copy / Artist / Album / Edition ID,
-    the artist coming straight off the certificate."""
+    """Page 2 (the back of the record) lists Copy / Artist / Edition ID, the
+    artist coming straight off the certificate. The album title is the hero of
+    page 1, so it is not repeated here (a third pair pushed Edition ID under the
+    footer)."""
     p = Presse(device)
     p.cut(TITLE, EDITION, ARTIST)
     assert device.wait_for_text(TITLE)
     open_card_pages(device, p)
     assert device.wait_for_text("Artist"), device.screen_texts()
     assert device.wait_for_text(ARTIST), device.screen_texts()
-    assert device.wait_for_text("Album"), device.screen_texts()
     assert device.wait_for_text("Edition ID"), device.screen_texts()
     p.tap_text("Back")
 

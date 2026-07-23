@@ -90,8 +90,6 @@ struct CardData {
     edition: u16,
     /// The copy number for a pressing; `None` for a master (a plate, not a copy).
     number: Option<u16>,
-    /// Pressings still to press, for a master; `None` for a pressing.
-    left: Option<u16>,
     edition_id: String,
     /// The album id, used to generate the fallback cover when no verified
     /// sleeve is stored.
@@ -117,7 +115,6 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 artist: String::from(title_str(&artist_buf, artist_len)?),
                 edition: nvm.edition,
                 number: None,
-                left: Some(nvm.counter),
                 edition_id: edition_id(&nvm.alb_pub)?,
                 album_id: id,
                 sleeve_verified: sleeve_verified(&sleeve_hash),
@@ -131,7 +128,6 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 artist: String::from(title_str(&album.artist, album.artist_len)?),
                 edition: pressing.edition,
                 number: Some(pressing.number),
-                left: None,
                 edition_id: edition_id(&album.albpub)?,
                 album_id: pressing.album_id,
                 sleeve_verified: sleeve_verified(&album.sleeve_hash),
@@ -221,7 +217,9 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
                 card.artist.clone()
             };
             pairs.push(pair(cstr(String::from("Artist")), cstr(artist)));
-            pairs.push(pair(cstr(String::from("Album")), cstr(card.title.clone())));
+            // The album title is the hero of page 1; repeating it here as a third
+            // pair pushed the Edition ID row under the footer. Two pairs plus the
+            // Edition ID bar clear the split footer with margin to spare.
             layout.tag_value_list(&pairs);
             // The Edition ID gets its own touchable row carrying the compiled
             // (i) glyph: tapping it opens the authenticity page. A top-right
@@ -242,14 +240,16 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
         }
         Page::Auth => {
             layout.header(cstr(String::from("Authenticity")), core::ptr::null());
+            // Both variants must wrap to two lines: a three-line proof pushes the
+            // "Check the Edition ID" value under the footer (measured on Flex).
             let proven = match card.number {
                 Some(n) => format!("Copy #{} of edition {}: genuine artwork, bound to this device", n, card.edition),
-                None => format!("The master of edition {}: genuine artwork, bound to this device", card.edition),
+                None => format!("Master of edition {}: genuine artwork, bound to this device", card.edition),
             };
             pairs.push(pair(cstr(String::from("This device proves")), cstr(proven)));
             pairs.push(pair(
                 cstr(String::from("It cannot prove")),
-                cstr(String::from("The album key may not be the real artist's; a copycat could reuse this art")),
+                cstr(String::from("The album key may not be the real artist's own")),
             ));
             pairs.push(pair(
                 cstr(String::from("Check the Edition ID")),
@@ -432,12 +432,25 @@ pub struct Library {
 impl Library {
     /// Build the library from fresh NVM and draw it. The returned handle keeps
     /// the screen (and its touch objects) live until dropped.
+    ///
+    /// A device almost always holds exactly one record: an artist keeps a
+    /// master, a buyer keeps a pressing. That case gets a hero layout, the sleeve
+    /// centered at full size with its title and status beneath, and the whole
+    /// content area tapping through to the card. Only when a device holds both
+    /// does the screen fall back to a two-row list.
     pub fn draw() -> Result<Library, AppSW> {
         use crate::app_ui::library::{Layout, ScreenArena, TOKEN_MASTER, TOKEN_PRESSING, TOKEN_QUIT};
 
         let nvm = Store::get()?;
         let n = crate::state::ART_W;
         let half = n / 2;
+        let both = nvm.has_master == 1 && nvm.has_pressing == 1;
+        // The hero's record token, used for the "Open" affordance in the footer.
+        let hero_token = if nvm.has_master == 1 {
+            TOKEN_MASTER
+        } else {
+            TOKEN_PRESSING
+        };
 
         let mut arena = ScreenArena::new();
         let mut strings: Vec<CString> = Vec::new();
@@ -452,21 +465,41 @@ impl Library {
 
         let mut has_any = false;
 
+        // A record's centered cover at full size, for the hero layout.
+        let hero_cover = |arena: &mut ScreenArena, canonical: alloc::vec::Vec<u8>| {
+            let disp = crate::sleeve::to_display(&canonical);
+            arena.icon(disp, n as u16, n as u16, ledger_secure_sdk_sys::NBGL_BPP_1)
+        };
+
         if nvm.has_master == 1 {
             let title = title_str(&nvm.title, nvm.title_len)?;
             let album_id = crate::crypto::sha256(&[&nvm.alb_pub])?;
             let sleeve_hash = crate::certs::album_cert_sleeve_hash(&nvm.album_cert);
-            let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(
-                &album_sleeve(&sleeve_hash, &album_id),
-                n,
-            ));
-            let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
-            let status = if nvm.counter == 0 {
-                String::from("Your master \u{00b7} sold out")
+            let canonical = album_sleeve(&sleeve_hash, &album_id);
+            let left = if nvm.counter == 0 {
+                String::from("Sold out")
             } else {
-                format!("Your master \u{00b7} {} of {} left", nvm.counter, nvm.edition)
+                format!("{} of {} left to press", nvm.counter, nvm.edition)
             };
-            layout.touchable_bar(icon, cstr(String::from(title)), cstr(status), TOKEN_MASTER);
+            if both {
+                let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
+                let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
+                layout.touchable_bar(
+                    icon,
+                    cstr(String::from(title)),
+                    cstr(format!("Your master, {}", left)),
+                    TOKEN_MASTER,
+                );
+            } else {
+                let icon = hero_cover(&mut arena, canonical);
+                layout.centered_info(
+                    icon,
+                    cstr(String::from(title)),
+                    cstr(String::from("Your master")),
+                    cstr(left),
+                    0,
+                );
+            }
             has_any = true;
         }
 
@@ -474,13 +507,22 @@ impl Library {
             let album = parse_album_cert(&nvm.pressing_album_cert)?;
             let title = title_str(&album.title, album.title_len)?;
             let pressing = crate::certs::parse_pressing_cert(&nvm.pressing_cert, &album.albpub)?;
-            let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(
-                &album_sleeve(&album.sleeve_hash, &pressing.album_id),
-                n,
-            ));
-            let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
+            let canonical = album_sleeve(&album.sleeve_hash, &pressing.album_id);
             let status = format!("#{} / {}", pressing.number, pressing.edition);
-            layout.touchable_bar(icon, cstr(String::from(title)), cstr(status), TOKEN_PRESSING);
+            if both {
+                let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
+                let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
+                layout.touchable_bar(icon, cstr(String::from(title)), cstr(status), TOKEN_PRESSING);
+            } else {
+                let icon = hero_cover(&mut arena, canonical);
+                layout.centered_info(
+                    icon,
+                    cstr(String::from(title)),
+                    cstr(String::from("Your copy")),
+                    cstr(status),
+                    0,
+                );
+            }
             has_any = true;
         }
 
@@ -491,7 +533,19 @@ impl Library {
             );
         }
 
-        layout.footer(cstr(String::from("Quitter")), TOKEN_QUIT);
+        // The hero (a single record) opens through an explicit "Open" in the
+        // footer; the two-row list opens through the rows themselves, so it keeps
+        // a plain "Quitter" footer.
+        if has_any && !both {
+            layout.split_footer(
+                cstr(String::from("Quitter")),
+                TOKEN_QUIT,
+                cstr(String::from("Open")),
+                hero_token,
+            );
+        } else {
+            layout.footer(cstr(String::from("Quitter")), TOKEN_QUIT);
+        }
         layout.draw();
 
         drop(cstr);
