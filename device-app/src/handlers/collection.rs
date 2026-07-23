@@ -162,6 +162,26 @@ fn label_value_row(
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 const ROW_VALUE_RIGHT_PX: u16 = 344;
 
+/// A library row's status line, indented to start under the row's title rather
+/// than at the screen's left edge. NBGL's touchable bar pushes a bar's sub-text
+/// back to the container's left margin (under the thumbnail), while the title is
+/// inset past the thumbnail; left as-is the two lines don't share a left edge.
+/// Prepending spaces worth the thumbnail's inset (its width plus the bar's
+/// interval) lines the status up with the title, so title and status read as a
+/// single text column to the right of the thumbnail. Measured in the sub-text's
+/// own font.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+fn indent_subtext(status: &str, indent_px: u16) -> String {
+    let font = ledger_secure_sdk_sys::BAGL_FONT_INTER_REGULAR_28px;
+    let measure = |s: &str| -> u16 {
+        let c = CString::new(s).unwrap_or_default();
+        unsafe { ledger_secure_sdk_sys::nbgl_getSingleLineTextWidth(font, c.as_ptr()) }
+    };
+    let space_w = measure("A A").saturating_sub(measure("AA")).max(1);
+    let n = (indent_px / space_w) as usize;
+    format!("{}{}", " ".repeat(n), status)
+}
+
 /// Which record a card shows. A device holds a master, a pressing, or (rarely)
 /// both; the library row tapped selects which.
 #[cfg(any(target_os = "stax", target_os = "flex"))]
@@ -699,12 +719,12 @@ impl Library {
                 } else {
                     format!("{} of {} left", nvm.counter, nvm.edition)
                 };
-                layout.touchable_bar(
-                    icon,
-                    cstr(title_fit),
-                    cstr(format!("Master record{}{}", ROW_SEP, row_status)),
-                    TOKEN_MASTER,
-                );
+                // "Master" (not "Master record") so the label plus "N of M left"
+                // fits the indented text column on one line; the single-record
+                // hero, with the whole width, keeps the full "Master record".
+                let status_line =
+                    indent_subtext(&format!("Master{}{}", ROW_SEP, row_status), half as u16 + 16);
+                layout.touchable_bar(icon, cstr(title_fit), cstr(status_line), TOKEN_MASTER);
             } else {
                 // The master is the one record that carries a role label: it is
                 // the plate, not a default copy. A default pressing goes
@@ -735,7 +755,8 @@ impl Library {
                     ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
                     ROW_TITLE_MAX_PX,
                 );
-                layout.touchable_bar(icon, cstr(title_fit), cstr(status), TOKEN_PRESSING);
+                let status_line = indent_subtext(&status, half as u16 + 16);
+                layout.touchable_bar(icon, cstr(title_fit), cstr(status_line), TOKEN_PRESSING);
             } else {
                 // A default pressing is not labelled "your copy": what the owner
                 // holds is simply the record, shown by title and its "#N of M".
@@ -895,7 +916,7 @@ pub fn handler_library_preview(command: Command<'_>, count: u8) -> Result<Comman
         let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
         let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
         let sub = if i == 0 {
-            format!("Master record{}5 of 5 left", ROW_SEP)
+            format!("Master{}5 of 5 left", ROW_SEP)
         } else {
             format!("#{} of 12", i)
         };
@@ -908,6 +929,7 @@ pub fn handler_library_preview(command: Command<'_>, count: u8) -> Result<Comman
             ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
             ROW_TITLE_MAX_PX,
         );
+        let sub = indent_subtext(&sub, half as u16 + 16);
         layout.touchable_bar(icon, cstr(title_fit), cstr(sub), TOKEN_PRESSING);
     }
     layout.footer(cstr(String::from("Quit")), TOKEN_QUIT);
