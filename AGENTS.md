@@ -20,6 +20,10 @@ thesis (physical editions of digital works, no chain, no server).
   Flexes). Holds no secrets; the protocol assumes it is hostile.
 - `docs/protocol.md` - the ceremony protocol (commit-reveal ECDH pairing, SAS words,
   press certificates, threat model). Keep in sync with the code.
+- `CEREMONIE-VIDEO.md` - runbook for the filmed ceremony on the two real Flexes with
+  the Lot 1 build (French). Driven by `scripts/preflight.sh` (read-only pre-flight),
+  `scripts/ceremony.sh` (the live relay) and `scripts/rehearse-emu.sh` (Speculos
+  rehearsal). Any APDU-format change must be reflected there or the live cut fails.
 
 ## Vocabulary (use this, not crypto jargon)
 
