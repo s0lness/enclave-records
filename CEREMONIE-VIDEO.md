@@ -275,6 +275,14 @@ MAC (32) doit tenir dans un `Lc` de 255.
   `APP_ELF`), mais ne pas s'en servir pour juger le build Lot 1.
 - **Verify offline**: ne garder que B attaché et couper le wifi à l'image.
 - **Ne pas toucher au checkout `C:\Users\sylve\projects\presse`** (occupé).
+- **Un pressage ne se transfère pas d'appareil à appareil.** Le certificat de
+  pressage lie `recvpub` au destinataire au moment du press, et `PRESS_ACCEPT`
+  refuse (`BadCert`) tout certificat dont le `recvpub` n'est pas celui du device.
+  Il n'existe aucune commande de cession, et presser exige un master
+  (`PRESS_OFFER` répond `NoMaster` sans lui). Un appareil ne détient par
+  ailleurs qu'un seul pressage à la fois (`has_pressing` déjà à 1 -> `BadState`).
+  C'est un choix de modèle, pas un manque: « bound to this device forever » est
+  affiché à la réception. Ne pas construire de scène de revente ou de don.
 
 ---
 
