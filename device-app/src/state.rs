@@ -68,16 +68,19 @@ static mut DATA: NVMData<AtomicStorage<PresseNvm>> = NVMData::new(AtomicStorage:
 /// Cover art: a square 1bpp sleeve. Kept out of `PresseNvm` because that
 /// struct is copied through the stack on every read.
 ///
-/// The width is bounded by two independent constraints:
+/// Two constraints pin the width at 128 once the device keeps two slots.
 ///
-/// * **Boot.** Past a certain `data_size` the loader accepts the app but it
-///   exits before serving its first APDU. Measured with two slots on Speculos:
-///   `data_size` 18432 boots, 19456 does not. Two 160-wide sleeves land at
-///   19968 and never boot; two 128-wide ones land at 17408 and do.
-/// * **Cell alignment.** The art is written in [`ART_CHUNK`]-byte cells, so
-///   `ART_W * ART_W / 8` must divide by 64, which means a multiple of 32.
-///
-/// 128 is the largest multiple of 32 satisfying both for two slots.
+/// * **Multiple of 32.** The art is written in [`ART_CHUNK`]-byte cells, so
+///   `ART_W * ART_W / 8` has to divide by 64. A width that does not (144, 152)
+///   leaves `ART_CELLS * ART_CHUNK` short of `ART_LEN`, and every read through
+///   [`Art::get`] runs off the end of the array.
+/// * **Boot.** Two 160-wide slots produce an app the loader installs but that
+///   exits before serving its first APDU, in every arrangement tried: one
+///   nested array, one flat array, and two separate storage objects all die.
+///   Two 128-wide slots boot. `data_size` alone does not explain it (an inert
+///   ballast array boots at 21504, well past the 19968 of two 160-wide slots),
+///   so treat the working configuration as measured, not as derived: re-run
+///   `scripts/build-video.sh` and the boot check after any change here.
 pub const ART_W: usize = 128;
 pub const ART_LEN: usize = ART_W * ART_W / 8;
 
@@ -96,23 +99,39 @@ pub const ART_SLOTS: usize = 2;
 pub const SLOT_MASTER: usize = 0;
 pub const SLOT_PRESSING: usize = 1;
 
+/// One `.nvm_data` object per slot. [`Art::slot_cells`] is the only place that
+/// maps a slot to its storage, so the arrangement can change without touching
+/// the callers.
+type ArtCells = [AlignedStorage<[u8; ART_CHUNK]>; ART_CELLS];
+const EMPTY_ART: ArtCells = [AlignedStorage::new([0u8; ART_CHUNK]); ART_CELLS];
+
 #[link_section = ".nvm_data"]
-static mut ART: NVMData<[[AlignedStorage<[u8; ART_CHUNK]>; ART_CELLS]; ART_SLOTS]> =
-    NVMData::new([[AlignedStorage::new([0u8; ART_CHUNK]); ART_CELLS]; ART_SLOTS]);
+static mut ART_MASTER: NVMData<ArtCells> = NVMData::new(EMPTY_ART);
+
+#[link_section = ".nvm_data"]
+static mut ART_PRESSING: NVMData<ArtCells> = NVMData::new(EMPTY_ART);
 
 pub struct Art;
 
 impl Art {
-    /// Borrow one slot's stored art. The cells of a slot are contiguous in
-    /// flash, so the first cell's address is the start of a single ART_LEN
-    /// bitmap: this is what lets NBGL render straight out of NVM, with no RAM
-    /// copy. An out-of-range slot borrows the master's, since a caller with a
-    /// bad slot must still get a valid bitmap rather than a wild pointer.
+    /// The storage object backing a slot. An out-of-range slot resolves to the
+    /// master's, since a caller with a bad slot must still get a valid bitmap
+    /// rather than a wild pointer.
+    fn slot_cells(slot: usize) -> *mut NVMData<ArtCells> {
+        if slot == SLOT_PRESSING {
+            &raw mut ART_PRESSING
+        } else {
+            &raw mut ART_MASTER
+        }
+    }
+
+    /// Borrow one slot's stored art. A slot's cells are contiguous in flash, so
+    /// its first cell's address is the start of a single ART_LEN bitmap: this is
+    /// what lets NBGL render straight out of NVM, with no RAM copy.
     pub fn get(slot: usize) -> &'static [u8; ART_LEN] {
-        let slot = if slot < ART_SLOTS { slot } else { SLOT_MASTER };
-        let data = &raw const ART;
+        let data = Self::slot_cells(slot);
         unsafe {
-            let first = (*data).get_ref()[slot][0].get_ref().as_ptr();
+            let first = (*data).get_ref()[0].get_ref().as_ptr();
             &*(first as *const [u8; ART_LEN])
         }
     }
@@ -137,9 +156,9 @@ impl Art {
         }
         let mut cell = [0u8; ART_CHUNK];
         cell.copy_from_slice(chunk);
-        let data = &raw mut ART;
+        let data = Self::slot_cells(slot);
         unsafe {
-            (*data).get_mut()[slot][offset / ART_CHUNK].update(&cell);
+            (*data).get_mut()[offset / ART_CHUNK].update(&cell);
         }
         Ok(())
     }
