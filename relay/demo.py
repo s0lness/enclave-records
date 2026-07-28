@@ -73,9 +73,15 @@ def main():
     parser.add_argument("--title", default="Random Access Memories")
     parser.add_argument("--artist", default="Daft Punk")
     parser.add_argument("--edition", type=int, default=5)
+    parser.add_argument("--cover", default="ram-cover.bin",
+                        help="sleeve in docs/art/ sealed into the album cert at cut time")
+    parser.add_argument("--swap", action="store_true",
+                        help="reverse the A/B roles (cut a second master on the other device)")
     args = parser.parse_args()
 
     paths = enumerate_ledgers()
+    if args.swap:
+        paths = list(reversed(paths))
     if args.collection:
         idx = 0 if args.collection == "a" else 1
         if len(paths) <= idx:
@@ -113,7 +119,7 @@ def main():
     else:
         # Upload the cover to A before the cut, so its hash is sealed into the
         # signed album cert and the sleeve becomes part of the edition.
-        cover_path = os.path.join(os.path.dirname(__file__), "..", "docs", "art", "ram-cover.bin")
+        cover_path = os.path.join(os.path.dirname(__file__), "..", "docs", "art", args.cover)
         if os.path.exists(cover_path):
             upload_art(a, open(cover_path, "rb").read())
             print(f"   cover uploaded to Flex A ({os.path.basename(cover_path)})")

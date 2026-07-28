@@ -50,7 +50,7 @@ def screen_bits(path: str, n: int) -> list[int] | None:
 
 def main() -> int:
     src, shot = sys.argv[1], sys.argv[2]
-    n = int(sys.argv[3]) if len(sys.argv) > 3 else 160
+    n = int(sys.argv[3]) if len(sys.argv) > 3 else 128
     data = open(src, "rb").read()
     observed = screen_bits(shot, n)
     if observed is None:

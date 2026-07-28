@@ -131,8 +131,9 @@ the `sleeve_hash` already inside the album cert the receiver stored.
 ## Sleeve art
 
 A sleeve is the album cover: a square **1bpp** bitmap, `N x N`, `N*N/8` bytes,
-no header. `N = 160` (3200 bytes) is the largest that fits the device's NVRAM
-data budget (which tops out at 32256 bytes, 63 pages of 512). The device draws
+no header. `N = 128` (2048 bytes) is the largest that fits, since the device
+keeps one slot per record it can hold (a master and a pressing) and the app
+stops booting between a `data_size` of 18432 and 19456. The device draws
 the title itself, at runtime, from the certificate; the bitmap carries no
 typography, so a baked-in title can never disagree with the signed one.
 

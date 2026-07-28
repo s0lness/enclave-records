@@ -10,10 +10,10 @@ Build actuellement flashé sur les deux Flex:
 |---|---|
 | Worktree | `C:\Users\sylve\projects\presse-video` |
 | Branche | `lot1-ui-polish` |
-| Commit | `28c6371` |
-| `data_size` | 16896 |
-| Hash app | `69e07c8f0badd4dd…` |
-| NVM | vierge des deux côtés (aucun master, aucun pressage) |
+| Commit | `28c6371` + les correctifs deux-emplacements / library en liste |
+| `data_size` | 17408 |
+| Hash app | `c4fe77fc9f27641d…` |
+| NVM | vierge des deux côtés après re-sideload (aucun master, aucun pressage) |
 
 > Ce runbook ne vaut QUE pour ce build. Le worktree `presse-classic` porte une
 > version antérieure du protocole: son `relay/demo.py` construit la trame `CUT`
@@ -97,7 +97,7 @@ Limites dures du firmware: titre 1 à 32 octets UTF-8, **artiste 0 à 13 octets*
 `demo.py` déroule seul, en bloquant à chaque étape gated jusqu'au tap physique:
 
 1. **cut**: A n'ayant pas de master, le relais uploade la pochette
-   (`docs/art/ram-cover.bin`, 3200 octets) puis envoie `INS_CUT`. A demande de
+   (`docs/art/ram-cover.bin`, 2048 octets) puis envoie `INS_CUT`. A demande de
    confirmer. (Si A avait déjà un master, l'étape serait sautée et annoncée.)
 2. **pairing**: commit-reveal ECDH à travers le relais, puis `INS_PAIR_SAS` sur
    les deux: les 4 mots s'affichent des deux côtés.
@@ -155,8 +155,10 @@ Losing this device destroys the plates.
 [ Cancel ]   [ Cut the master ]
 ```
 
-Après le tap, la library de A devient: titre / **Master record** /
-**5 of 5 left to press** / `Quit` `Open`.
+Après le tap, la library de A devient une ligne: vignette de pochette, titre,
+et le statut **Master - 5 of 5 left**, au-dessus d'un pied de page `Quit`. La
+liste est le seul état de la library, quel que soit le nombre de disques: la
+ligne elle-même ouvre la fiche, il n'y a plus d'affordance « Open ».
 
 **À filmer**: l'écran A, la ligne « Edition of 5, fixed forever ».
 

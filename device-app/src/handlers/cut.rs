@@ -53,13 +53,13 @@ pub fn handler_cut(command: Command<'_>) -> Result<CommandResponse<'_>, AppSW> {
         return Err(AppSW::Deny);
     }
 
-    // The sleeve is bound at cut time: whatever art was uploaded before the
-    // cut becomes part of the signed identity. A blank region binds the
-    // all-zero sentinel, meaning "no sleeve".
-    let sleeve_hash: [u8; SLEEVE_HASH_LEN] = if Art::is_blank() {
+    // The sleeve is bound at cut time: whatever art was uploaded to the master
+    // slot before the cut becomes part of the signed identity. A blank slot
+    // binds the all-zero sentinel, meaning "no sleeve".
+    let sleeve_hash: [u8; SLEEVE_HASH_LEN] = if Art::is_blank(crate::state::SLOT_MASTER) {
         [0u8; SLEEVE_HASH_LEN]
     } else {
-        crypto::sha256(&[Art::get()])?
+        crypto::sha256(&[Art::get(crate::state::SLOT_MASTER)])?
     };
 
     let (alb_priv, alb_pub) = crypto::gen_keypair()?;

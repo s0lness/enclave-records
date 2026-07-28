@@ -67,10 +67,18 @@ static mut DATA: NVMData<AtomicStorage<PresseNvm>> = NVMData::new(AtomicStorage:
 
 /// Cover art: a square 1bpp sleeve. Kept out of `PresseNvm` because that
 /// struct is copied through the stack on every read.
-/// 160x160 is the largest square that still boots: the app's NVRAM data
-/// region tops out at 32256 bytes (63 pages), and 192x192 pushes it to 32768,
-/// where the loader accepts the app but it exits before the first APDU.
-pub const ART_W: usize = 160;
+///
+/// The width is bounded by two independent constraints:
+///
+/// * **Boot.** Past a certain `data_size` the loader accepts the app but it
+///   exits before serving its first APDU. Measured with two slots on Speculos:
+///   `data_size` 18432 boots, 19456 does not. Two 160-wide sleeves land at
+///   19968 and never boot; two 128-wide ones land at 17408 and do.
+/// * **Cell alignment.** The art is written in [`ART_CHUNK`]-byte cells, so
+///   `ART_W * ART_W / 8` must divide by 64, which means a multiple of 32.
+///
+/// 128 is the largest multiple of 32 satisfying both for two slots.
+pub const ART_W: usize = 128;
 pub const ART_LEN: usize = ART_W * ART_W / 8;
 
 /// Stored as page-aligned cells and written one cell at a time: the SDK's
@@ -78,43 +86,60 @@ pub const ART_LEN: usize = ART_W * ART_W / 8;
 pub const ART_CHUNK: usize = 64;
 pub const ART_CELLS: usize = ART_LEN / ART_CHUNK;
 
+/// One sleeve per record the device can hold. The NVM data model caps that at
+/// a master and a pressing, so two slots cover every reachable state. A single
+/// shared region cannot: the sleeve is validated against the hash signed into
+/// *its own* album certificate, so two records sharing one region means the
+/// second cut silently invalidates the first record's cover and it falls back
+/// to generative art.
+pub const ART_SLOTS: usize = 2;
+pub const SLOT_MASTER: usize = 0;
+pub const SLOT_PRESSING: usize = 1;
+
 #[link_section = ".nvm_data"]
-static mut ART: NVMData<[AlignedStorage<[u8; ART_CHUNK]>; ART_CELLS]> =
-    NVMData::new([AlignedStorage::new([0u8; ART_CHUNK]); ART_CELLS]);
+static mut ART: NVMData<[[AlignedStorage<[u8; ART_CHUNK]>; ART_CELLS]; ART_SLOTS]> =
+    NVMData::new([[AlignedStorage::new([0u8; ART_CHUNK]); ART_CELLS]; ART_SLOTS]);
 
 pub struct Art;
 
 impl Art {
-    /// Borrow the stored art. The cells are contiguous in flash, so the
-    /// first cell's address is the start of a single ART_LEN bitmap: this is
-    /// what lets NBGL render straight out of NVM, with no RAM copy.
-    pub fn get() -> &'static [u8; ART_LEN] {
+    /// Borrow one slot's stored art. The cells of a slot are contiguous in
+    /// flash, so the first cell's address is the start of a single ART_LEN
+    /// bitmap: this is what lets NBGL render straight out of NVM, with no RAM
+    /// copy. An out-of-range slot borrows the master's, since a caller with a
+    /// bad slot must still get a valid bitmap rather than a wild pointer.
+    pub fn get(slot: usize) -> &'static [u8; ART_LEN] {
+        let slot = if slot < ART_SLOTS { slot } else { SLOT_MASTER };
         let data = &raw const ART;
         unsafe {
-            let first = (*data).get_ref()[0].get_ref().as_ptr();
+            let first = (*data).get_ref()[slot][0].get_ref().as_ptr();
             &*(first as *const [u8; ART_LEN])
         }
     }
 
-    /// True when no art has been uploaded (the region is still all zeros).
-    /// A cut with a blank region binds the all-zero sleeve-hash sentinel, and
+    /// True when no art has been uploaded to this slot (still all zeros).
+    /// A cut with a blank slot binds the all-zero sleeve-hash sentinel, and
     /// rendering shows generative art rather than a blank square.
-    pub fn is_blank() -> bool {
-        Self::get().iter().all(|&b| b == 0)
+    pub fn is_blank(slot: usize) -> bool {
+        Self::get(slot).iter().all(|&b| b == 0)
     }
 
     /// Burn one chunk at `offset` through the NVM write syscall (a plain
     /// slice assignment would not reach flash). A partial upload leaves
     /// partial art, which the album hash check then rejects.
-    pub fn write_chunk(offset: usize, chunk: &[u8]) -> Result<(), AppSW> {
-        if chunk.len() != ART_CHUNK || offset % ART_CHUNK != 0 || offset + chunk.len() > ART_LEN {
+    pub fn write_chunk(slot: usize, offset: usize, chunk: &[u8]) -> Result<(), AppSW> {
+        if slot >= ART_SLOTS
+            || chunk.len() != ART_CHUNK
+            || offset % ART_CHUNK != 0
+            || offset + chunk.len() > ART_LEN
+        {
             return Err(AppSW::WrongApduLength);
         }
         let mut cell = [0u8; ART_CHUNK];
         cell.copy_from_slice(chunk);
         let data = &raw mut ART;
         unsafe {
-            (*data).get_mut()[offset / ART_CHUNK].update(&cell);
+            (*data).get_mut()[slot][offset / ART_CHUNK].update(&cell);
         }
         Ok(())
     }

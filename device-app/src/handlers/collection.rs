@@ -20,18 +20,18 @@ fn title_str(title: &[u8], title_len: u8) -> Result<&str, AppSW> {
     core::str::from_utf8(&title[..title_len as usize]).map_err(|_| AppSW::BadCert)
 }
 
-/// The sleeve this device should show for an album: the stored art when its
-/// hash matches the one signed into the album certificate, otherwise the
-/// generated label art.
+/// The sleeve this device should show for an album: the art stored in that
+/// record's own slot when its hash matches the one signed into the album
+/// certificate, otherwise the generated label art.
 ///
 /// A mismatch is not an error to report but a fact to render honestly: the
 /// device shows the album's own generated face rather than a bitmap the
 /// signed identity does not vouch for. An all-zero `sleeve_hash` means the
 /// edition was cut with no sleeve, so it too falls back.
-pub fn album_sleeve(sleeve_hash: &[u8; 32], album_id: &[u8; 32]) -> alloc::vec::Vec<u8> {
+pub fn album_sleeve(sleeve_hash: &[u8; 32], album_id: &[u8; 32], slot: usize) -> alloc::vec::Vec<u8> {
     let unbound = *sleeve_hash == [0u8; 32];
-    if !unbound && !crate::state::Art::is_blank() {
-        let art = crate::state::Art::get();
+    if !unbound && !crate::state::Art::is_blank(slot) {
+        let art = crate::state::Art::get(slot);
         if let Ok(hash) = crate::crypto::sha256(&[art]) {
             if crate::crypto::mac_eq(&hash, sleeve_hash) {
                 return art.to_vec();
@@ -61,13 +61,13 @@ fn collection_id(devpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, App
     Ok(fingerprint_str(&fp))
 }
 
-/// Whether the stored NVM sleeve is the one the album signature commits to.
-/// Same rule as [`album_sleeve`], but returns only the verdict so the card can
-/// pick its cover source without a heap copy.
-fn sleeve_verified(sleeve_hash: &[u8; 32]) -> bool {
+/// Whether the sleeve in a record's slot is the one its album signature commits
+/// to. Same rule as [`album_sleeve`], but returns only the verdict so the card
+/// can pick its cover source without a heap copy.
+fn sleeve_verified(sleeve_hash: &[u8; 32], slot: usize) -> bool {
     *sleeve_hash != [0u8; 32]
-        && !crate::state::Art::is_blank()
-        && crate::crypto::sha256(&[crate::state::Art::get()])
+        && !crate::state::Art::is_blank(slot)
+        && crate::crypto::sha256(&[crate::state::Art::get(slot)])
             .map(|h| crate::crypto::mac_eq(&h, sleeve_hash))
             .unwrap_or(false)
 }
@@ -207,10 +207,12 @@ struct CardData {
     /// The album id, used to generate the fallback cover when no verified
     /// sleeve is stored.
     album_id: [u8; 32],
-    /// True when the stored NVM sleeve hashes to the signed sleeve hash, so the
-    /// card reads the real cover straight out of flash; otherwise it renders the
-    /// generative fallback.
+    /// True when the sleeve in this record's slot hashes to the signed sleeve
+    /// hash, so the card reads the real cover straight out of flash; otherwise
+    /// it renders the generative fallback.
     sleeve_verified: bool,
+    /// Which art slot holds this record's sleeve: the master's or the pressing's.
+    slot: usize,
 }
 
 #[cfg(any(target_os = "stax", target_os = "flex"))]
@@ -231,7 +233,8 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 edition_id: edition_id(&nvm.alb_pub)?,
                 collection_id: collection_id(&nvm.dev_pub)?,
                 album_id: id,
-                sleeve_verified: sleeve_verified(&sleeve_hash),
+                sleeve_verified: sleeve_verified(&sleeve_hash, crate::state::SLOT_MASTER),
+                slot: crate::state::SLOT_MASTER,
             }))
         }
         RecordKind::Pressing if nvm.has_pressing == 1 => {
@@ -245,7 +248,8 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 edition_id: edition_id(&album.albpub)?,
                 collection_id: collection_id(&nvm.dev_pub)?,
                 album_id: pressing.album_id,
-                sleeve_verified: sleeve_verified(&album.sleeve_hash),
+                sleeve_verified: sleeve_verified(&album.sleeve_hash, crate::state::SLOT_PRESSING),
+                slot: crate::state::SLOT_PRESSING,
             }))
         }
         _ => Ok(None),
@@ -317,7 +321,7 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
         Page::Card => {
             layout.header(cstr(String::from("Enclave Records")), core::ptr::null());
             let cover = if card.sleeve_verified {
-                crate::sleeve::Cover::Canonical(crate::state::Art::get())
+                crate::sleeve::Cover::Canonical(crate::state::Art::get(card.slot))
             } else {
                 crate::sleeve::Cover::Fallback(card.album_id)
             };
@@ -467,10 +471,7 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
 /// Blocks until "Back" from the card or the back, or an incoming APDU.
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 pub fn show_record_card(kind: RecordKind) -> Result<(), AppSW> {
-    use crate::app_ui::library::{
-        Exit, Layout, TOKEN_BACK, TOKEN_INFO_COLLECTION, TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER,
-        TOKEN_LEARN_MORE, TOKEN_PAGER,
-    };
+    use crate::app_ui::library::{Layout, TOKEN_BACK};
 
     let Some(card) = gather_card(kind)? else {
         // Empty: a single page with a Back footer.
@@ -655,24 +656,16 @@ impl Library {
     /// Build the library from fresh NVM and draw it. The returned handle keeps
     /// the screen (and its touch objects) live until dropped.
     ///
-    /// A device almost always holds exactly one record: an artist keeps a
-    /// master, a buyer keeps a pressing. That case gets a hero layout, the sleeve
-    /// centered at full size with its title and status beneath, and the whole
-    /// content area tapping through to the card. Only when a device holds both
-    /// does the screen fall back to a two-row list.
+    /// One row per record held, always, whatever the count. The layout does not
+    /// change shape with the number of records: a single record reads the same
+    /// as two, and the row is the tap target in both cases. The full-size sleeve
+    /// lives on the record card, one tap away.
     pub fn draw() -> Result<Library, AppSW> {
         use crate::app_ui::library::{Layout, ScreenArena, TOKEN_MASTER, TOKEN_PRESSING, TOKEN_QUIT};
 
         let nvm = Store::get()?;
         let n = crate::state::ART_W;
         let half = n / 2;
-        let both = nvm.has_master == 1 && nvm.has_pressing == 1;
-        // The hero's record token, used for the "Open" affordance in the footer.
-        let hero_token = if nvm.has_master == 1 {
-            TOKEN_MASTER
-        } else {
-            TOKEN_PRESSING
-        };
 
         let mut arena = ScreenArena::new();
         let mut strings: Vec<CString> = Vec::new();
@@ -687,57 +680,39 @@ impl Library {
 
         let mut has_any = false;
 
-        // A record's centered cover at full size, for the hero layout.
-        let hero_cover = |arena: &mut ScreenArena, canonical: alloc::vec::Vec<u8>| {
-            let disp = crate::sleeve::to_display(&canonical);
-            arena.icon(disp, n as u16, n as u16, ledger_secure_sdk_sys::NBGL_BPP_1)
+        // One list row: the decimated sleeve as a thumbnail, the title fitted to
+        // a single line, and the status indented to share the title's left edge.
+        let row = |arena: &mut ScreenArena,
+                   layout: &mut Layout,
+                   cstr: &mut dyn FnMut(String) -> *const core::ffi::c_char,
+                   canonical: alloc::vec::Vec<u8>,
+                   title: &str,
+                   status: String,
+                   token: u8| {
+            let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
+            let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
+            let title_fit = fit_one_line(
+                title,
+                ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
+                ROW_TITLE_MAX_PX,
+            );
+            let status_line = indent_subtext(&status, half as u16 + 16);
+            layout.touchable_bar(icon, cstr(title_fit), cstr(status_line), token);
         };
 
         if nvm.has_master == 1 {
             let title = title_str(&nvm.title, nvm.title_len)?;
             let album_id = crate::crypto::sha256(&[&nvm.alb_pub])?;
             let sleeve_hash = crate::certs::album_cert_sleeve_hash(&nvm.album_cert);
-            let canonical = album_sleeve(&sleeve_hash, &album_id);
-            let left = if nvm.counter == 0 {
-                String::from("Sold out")
+            let canonical = album_sleeve(&sleeve_hash, &album_id, crate::state::SLOT_MASTER);
+            // "Master" (not "Master record") so the label plus "N of M left" fits
+            // the indented text column on one line.
+            let status = if nvm.counter == 0 {
+                format!("Master{}Sold out", ROW_SEP)
             } else {
-                format!("{} of {} left to press", nvm.counter, nvm.edition)
+                format!("Master{}{} of {} left", ROW_SEP, nvm.counter, nvm.edition)
             };
-            if both {
-                let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
-                let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
-                let title_fit = fit_one_line(
-                    title,
-                    ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
-                    ROW_TITLE_MAX_PX,
-                );
-                // The list row's status is the compact "N of M left": with a
-                // thumbnail on its left, the hero's full "N of M left to press"
-                // would wrap to a second line and stack the rows too tall.
-                let row_status = if nvm.counter == 0 {
-                    String::from("Sold out")
-                } else {
-                    format!("{} of {} left", nvm.counter, nvm.edition)
-                };
-                // "Master" (not "Master record") so the label plus "N of M left"
-                // fits the indented text column on one line; the single-record
-                // hero, with the whole width, keeps the full "Master record".
-                let status_line =
-                    indent_subtext(&format!("Master{}{}", ROW_SEP, row_status), half as u16 + 16);
-                layout.touchable_bar(icon, cstr(title_fit), cstr(status_line), TOKEN_MASTER);
-            } else {
-                // The master is the one record that carries a role label: it is
-                // the plate, not a default copy. A default pressing goes
-                // unlabelled (see below).
-                let icon = hero_cover(&mut arena, canonical);
-                layout.centered_info(
-                    icon,
-                    cstr(String::from(title)),
-                    cstr(String::from("Master record")),
-                    cstr(left),
-                    0,
-                );
-            }
+            row(&mut arena, &mut layout, &mut cstr, canonical, title, status, TOKEN_MASTER);
             has_any = true;
         }
 
@@ -745,30 +720,13 @@ impl Library {
             let album = parse_album_cert(&nvm.pressing_album_cert)?;
             let title = title_str(&album.title, album.title_len)?;
             let pressing = crate::certs::parse_pressing_cert(&nvm.pressing_cert, &album.albpub)?;
-            let canonical = album_sleeve(&album.sleeve_hash, &pressing.album_id);
+            let canonical = album_sleeve(
+                &album.sleeve_hash,
+                &pressing.album_id,
+                crate::state::SLOT_PRESSING,
+            );
             let status = format!("#{} of {}", pressing.number, pressing.edition);
-            if both {
-                let thumb = crate::sleeve::to_display(&crate::sleeve::decimate(&canonical, n));
-                let icon = arena.icon(thumb, half as u16, half as u16, ledger_secure_sdk_sys::NBGL_BPP_1);
-                let title_fit = fit_one_line(
-                    title,
-                    ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px,
-                    ROW_TITLE_MAX_PX,
-                );
-                let status_line = indent_subtext(&status, half as u16 + 16);
-                layout.touchable_bar(icon, cstr(title_fit), cstr(status_line), TOKEN_PRESSING);
-            } else {
-                // A default pressing is not labelled "your copy": what the owner
-                // holds is simply the record, shown by title and its "#N of M".
-                let icon = hero_cover(&mut arena, canonical);
-                layout.centered_info(
-                    icon,
-                    cstr(String::from(title)),
-                    cstr(status),
-                    core::ptr::null(),
-                    0,
-                );
-            }
+            row(&mut arena, &mut layout, &mut cstr, canonical, title, status, TOKEN_PRESSING);
             has_any = true;
         }
 
@@ -779,19 +737,8 @@ impl Library {
             );
         }
 
-        // The hero (a single record) opens through an explicit "Open" in the
-        // footer; the two-row list opens through the rows themselves, so it keeps
-        // a plain "Quit" footer.
-        if has_any && !both {
-            layout.split_footer(
-                cstr(String::from("Quit")),
-                TOKEN_QUIT,
-                cstr(String::from("Open")),
-                hero_token,
-            );
-        } else {
-            layout.footer(cstr(String::from("Quit")), TOKEN_QUIT);
-        }
+        // Every row is its own tap target, so the footer carries only "Quit".
+        layout.footer(cstr(String::from("Quit")), TOKEN_QUIT);
         layout.draw();
 
         drop(cstr);
@@ -828,7 +775,12 @@ pub fn handler_art_test(command: Command<'_>, stage: u8) -> Result<CommandRespon
     const N: usize = ART_W;
     let mut arena = ScreenArena::new();
     let icon = if stage == 1 {
-        arena.icon_static(Art::get(), N as u16, N as u16, ledger_secure_sdk_sys::NBGL_BPP_1)
+        arena.icon_static(
+            Art::get(crate::state::SLOT_MASTER),
+            N as u16,
+            N as u16,
+            ledger_secure_sdk_sys::NBGL_BPP_1,
+        )
     } else {
         let mut bitmap = alloc::vec![0u8; N * N / 8];
         let s = N / 16;
@@ -965,6 +917,7 @@ pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>,
         collection_id: String::from("3FC2A9B1"),
         album_id: [0x42u8; 32],
         sleeve_verified: false,
+        slot: crate::state::SLOT_MASTER,
     };
     card_loop(&card)?;
 

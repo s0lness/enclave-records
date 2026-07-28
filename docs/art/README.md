@@ -14,16 +14,22 @@ Everything here is produced by `scripts/sleeve.py`.
 
 | | |
 |---|---|
-| size | **160 x 160** pixels |
+| size | **128 x 128** pixels |
 | depth | 1 bit per pixel |
-| length | **3200 bytes**, no header, no palette |
+| length | **2048 bytes**, no header, no palette |
 | polarity | bit `1` = white (lit), `0` = black |
 
-160 is fixed, not a preference: 192x192 (4608 bytes) does not fit the app's
-~32 KB NVRAM data region and the app fails to boot, 160 does. The edge must
-also be a multiple of 32, because the device writes the art in 64-byte cells
-and `N*N/8` therefore has to divide by 64. `--size 128` and `--size 192` still
-work for bench experiments; only 160 ships.
+128 is fixed, not a preference. The device keeps **one art slot per record it
+can hold**, a master and a pressing, because each sleeve is checked against the
+hash signed into its own album certificate; a single shared region means the
+second cut invalidates the first record's cover. Two slots cost twice the
+bytes, and past a certain `data_size` the loader accepts the app but it exits
+before serving its first APDU: measured on Speculos, 18432 boots and 19456 does
+not, so two 160-wide sleeves (19968) never boot and two 128-wide ones (17408)
+do. The edge must also be a multiple of 32, because the device writes the art
+in 64-byte cells and `N*N/8` therefore has to divide by 64, which rules out
+every value between 128 and 160. `--size 160` and `--size 192` still work for
+bench experiments; only 128 ships.
 
 ### Scan order (the part to cross-check)
 
@@ -31,7 +37,7 @@ work for bench experiments; only 160 ships.
 display, counting `x` right and `y` down from the top-left:
 
 ```
-bit_index = (160 - 1 - x) * 160 + y
+bit_index = (N - 1 - x) * N + y
 byte      = bit_index // 8
 bit       = 7 - (bit_index % 8)        # MSB = first pixel of its byte
 ```
@@ -82,13 +88,16 @@ Two things went into that, and they have different confidence levels:
 
 ## Assets
 
+Packed at 128x128 (2048 bytes each), the width `state.rs` now pins: the device
+keeps one art slot per record it can hold, and two 160-wide slots do not boot.
+
 | file | album | sha256 of the packed bytes |
 |---|---|---|
-| `ram-cover.bin` | Random Access Memories | `b93ddbc7a5672d0fe0f41b252ff943383b1f554b6eac30457c30c8fa88cd4ab8` |
-| `eclipse-cover.bin` | Solar Debt | `251aedf5eb32981cf7baff78773111d654cdde121b1f6cb7ea728ae2c1564765` |
-| `monolith-cover.bin` | Concrete Sleep | `148a8e085ea1c7cd06bc780ca37cc41ab3c2226d3614482a08acc9b9ba7d8283` |
-| `transit-cover.bin` | Null Island | `85ad91185e4a55e1b0725e1f10563b4df445367473b2eee3d960893137cd37e7` |
-| `test-pattern.bin` | (packing probe, not an album) | `dd6947897903f7de7066391946a0ff493e7c530c0e89c2c59eaac9e67a3ee438` |
+| `ram-cover.bin` | Random Access Memories | `c8b6da83eae4899b204d1b141766bbc28e09b151fc4053baef05da5825de2c08` |
+| `eclipse-cover.bin` | Solar Debt | `3609722277460b1b2442c4f1414a49ec78b36822cabac63a42efb5573dddbd45` |
+| `monolith-cover.bin` | Concrete Sleep | `8e7ccffc26086378538426277f83808b868ad595b596c3eb1a1521f3a5a6fe62` |
+| `transit-cover.bin` | Null Island | `e48f9f9ccea2d5d3d8bc22d084be6c36b1874670054d25653aa85e0cfed29a88` |
+| `test-pattern.bin` | (packing probe, not an album) | `56ba5b0628bad7769f175d15ad215acfded1884e0424d35910c0591867782eb1` |
 
 Each has a `-preview.png` beside it: the same bits at 4x, nearest-neighbour.
 

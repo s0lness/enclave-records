@@ -21,10 +21,12 @@ N x N pixels, 1 bit per pixel, N*N/8 bytes, no header. Bit value 1 = white
 (lit), 0 = black, matching the value polarity of the 4bpp glyphs already in
 this repo (0 = black .. 15 = white).
 
-N ships at 160 (3200 bytes): 192 does not fit the app's ~32 KB NVRAM data
-region, 160 does, measured on device. N must be a multiple of 32 because the
-device writes the art in 64-byte cells, so N*N/8 has to divide by 64. Other
-sizes (128, 192) still work behind `--size` for bench work.
+N ships at 128 (2048 bytes). The device keeps one art slot per record it can
+hold, a master and a pressing, and two 160-wide slots push `data_size` past the
+point where the app stops booting (18432 boots, 19456 does not, measured on
+Speculos). N must also be a multiple of 32, because the device writes the art
+in 64-byte cells, so N*N/8 has to divide by 64; 128 is the largest value
+meeting both. Other sizes still work behind `--size` for bench work.
 
 The scan order is NOT plain row-major. It was derived empirically from two
 on-device renders rather than assumed (see docs/art/README.md):
@@ -381,8 +383,8 @@ def main(argv: list[str] | None = None) -> int:
                           "'list' names them)")
     src.add_argument("--test-pattern", action="store_true",
                      help="emit the packing-convention probe pattern")
-    p.add_argument("--size", type=int, default=160,
-                   help="edge in pixels, multiple of 32 (default 160, the "
+    p.add_argument("--size", type=int, default=128,
+                   help="edge in pixels, multiple of 32 (default 128, the "
                         "size that ships)")
     p.add_argument("--dither", choices=DITHERS, default="atkinson",
                    help="default atkinson")

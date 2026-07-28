@@ -51,8 +51,11 @@ PRESSING_CERT_LEN = PRESSING_PAYLOAD_LEN + 1 + 72
 INS_SET_ART = 0x62
 INS_GET_ART = 0x64
 ART_CHUNK = 64
-ART_W = 160
-ART_LEN = ART_W * ART_W // 8  # 1bpp square sleeve, 3200 bytes
+ART_W = 128  # must track state.rs: the device rejects any offset past ART_LEN
+ART_LEN = ART_W * ART_W // 8  # 1bpp square sleeve, 2048 bytes
+# One art slot per record a device can hold: its master and its pressing.
+SLOT_MASTER = 0
+SLOT_PRESSING = 1
 
 
 def apdu_hex(ins: int, data: bytes = b"", p1: int = 0, p2: int = 0) -> str:
@@ -70,15 +73,15 @@ class Presse:
     def __init__(self, device):
         self.dev = device
 
-    def cmd(self, ins: int, data: bytes = b"", p1: int = 0) -> bytes:
-        resp = self.dev.apdu(apdu_hex(ins, data, p1))
+    def cmd(self, ins: int, data: bytes = b"", p1: int = 0, p2: int = 0) -> bytes:
+        resp = self.dev.apdu(apdu_hex(ins, data, p1, p2))
         body, sw = split_sw(resp)
         assert sw == SW_OK, f"{self.dev.name}: INS {ins:#x} returned SW {sw}"
         return body
 
-    def cmd_sw(self, ins: int, data: bytes = b"", p1: int = 0) -> str:
+    def cmd_sw(self, ins: int, data: bytes = b"", p1: int = 0, p2: int = 0) -> str:
         """Variant returning the status word for error-path tests."""
-        _, sw = split_sw(self.dev.apdu(apdu_hex(ins, data, p1)))
+        _, sw = split_sw(self.dev.apdu(apdu_hex(ins, data, p1, p2)))
         return sw
 
     def cmd_gated(self, ins: int, data: bytes, button_text: str, wait_text: str):
@@ -284,32 +287,36 @@ def verify_sleeve(album_cert: bytes, art_bytes: bytes) -> bool:
     return hashlib.sha256(art_bytes).digest() == sleeve_hash
 
 
-def upload_art(presse: "Presse", art_bytes: bytes):
-    """Push a packed sleeve to the device over SET_ART, chunk by chunk."""
+def upload_art(presse: "Presse", art_bytes: bytes, slot: int = SLOT_MASTER):
+    """Push a packed sleeve into one of the device's art slots, chunk by chunk."""
     for off in range(0, len(art_bytes), ART_CHUNK):
         payload = struct.pack("<H", off) + art_bytes[off : off + ART_CHUNK]
-        presse.cmd(INS_SET_ART, payload)
+        presse.cmd(INS_SET_ART, payload, p1=slot)
 
 
-def read_art(presse: "Presse") -> bytes:
-    """Read a device's stored sleeve back over GET_ART, chunk by chunk."""
+def read_art(presse: "Presse", slot: int = SLOT_MASTER) -> bytes:
+    """Read one of a device's stored sleeves back over GET_ART, chunk by chunk."""
     art = bytearray()
     for chunk in range((ART_LEN + ART_CHUNK - 1) // ART_CHUNK):
-        art += presse.cmd(INS_GET_ART, p1=chunk)
+        art += presse.cmd(INS_GET_ART, p1=chunk, p2=slot)
     return bytes(art)
 
 
 def carry_sleeve(src: "Presse", dst: "Presse"):
-    """Copy src's sleeve to dst over the relay (GET_ART then SET_ART).
+    """Copy the master's sleeve on src into dst's pressing slot over the relay.
+
+    A press moves a copy of the master's record, so the sleeve leaves src's
+    master slot and lands in dst's pressing slot: each record keeps its own
+    cover, and a device holding both shows both.
 
     The bytes are public and dst validates them against the sleeve hash the
     album certificate already commits to, so an untrusted relay carrying them
     is fine. Returns the sha256 hex, or None when src has no sleeve (blank
-    region): nothing to carry, so the caller stays silent."""
-    art = read_art(src)
+    slot): nothing to carry, so the caller stays silent."""
+    art = read_art(src, SLOT_MASTER)
     if not any(art):
         return None
-    upload_art(dst, art)
+    upload_art(dst, art, SLOT_PRESSING)
     return hashlib.sha256(art).hexdigest()
 
 

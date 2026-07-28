@@ -33,11 +33,11 @@ ARTIST = "Chopin"
 EDITION = 5
 
 
-def open_card_pages(dev, p):
-    """From the library, open the record via its "Open" footer, then walk
-    card -> back of record. The single-record library is a centered hero whose
-    footer opens the card; only a two-record library uses tappable rows."""
-    p.tap_text("Open")
+def open_card_pages(dev, p, title=None):
+    """From the library, open a record by tapping its row, then walk
+    card -> back of record. The library is a list at any count, so the row is
+    always the tap target and the footer carries only "Quit"."""
+    p.tap_text(title or TITLE)
     assert dev.wait_for_text("1 of 2"), dev.screen_texts()  # the card pager
     p.tap_text("1 of 2")  # pager -> back of record
     assert dev.wait_for_text("Edition ID"), dev.screen_texts()
@@ -64,19 +64,19 @@ def test_library_lists_the_master_after_cut(device):
     p = Presse(device)
     p.cut(TITLE, EDITION)
     assert device.wait_for_text(TITLE), device.screen_texts()
-    # The hero's status lines: the "Master record" role over "N of M left to
-    # press". Only the master carries a role label; a default pressing does not.
-    assert device.wait_for_text("Master record"), device.screen_texts()
+    # The row's status line: the "Master" role and "N of M left" on one line.
+    # Only the master carries a role label; a pressing shows its "#N of M".
+    assert device.wait_for_text("Master"), device.screen_texts()
     assert device.wait_for_text("5 of 5 left"), device.screen_texts()
 
 
 def test_opening_the_record_opens_the_card(device):
-    """Opening the record (via the hero library's "Open" footer) shows its card
-    (page 1 of 2, with the pager chevrons), and Back returns to the library."""
+    """Opening the record (by tapping its library row) shows its card (page 1
+    of 2, with the pager chevrons), and Back returns to the library."""
     p = Presse(device)
     p.cut(TITLE, EDITION)
     assert device.wait_for_text(TITLE)
-    p.tap_text("Open")
+    p.tap_text(TITLE)
     # The card is page 1 of 2: the pager chevrons show.
     assert device.wait_for_text("1 of 2"), device.screen_texts()
     p.tap_text("Back")
@@ -93,7 +93,7 @@ def test_record_title_comes_from_the_certificate(device):
     _, cert_title, cert_artist, _, _, _, _ = parse_album_cert(album_cert)
     assert cert_title == TITLE
     assert cert_artist == ARTIST
-    p.tap_text("Open")
+    p.tap_text(TITLE)
     assert device.wait_for_text(TITLE), device.screen_texts()
     p.tap_text("Back")
 
@@ -117,7 +117,7 @@ def test_front_of_card_shows_title_and_artist(device):
     p = Presse(device)
     p.cut(TITLE, EDITION, ARTIST)
     assert device.wait_for_text(TITLE)
-    p.tap_text("Open")
+    p.tap_text(TITLE)
     assert device.wait_for_text("1 of 2"), device.screen_texts()  # on the card
     assert device.wait_for_text(ARTIST), device.screen_texts()
     p.tap_text("Back")
@@ -200,7 +200,7 @@ def test_bulk_art_upload_leaves_the_library_intact(device):
     # The library still lists the record, unchanged, and the device is still
     # serving commands: the burst neither corrupted the screen nor wedged it.
     assert device.wait_for_text(TITLE), device.screen_texts()
-    assert device.wait_for_text("Master record"), device.screen_texts()
+    assert device.wait_for_text("Master"), device.screen_texts()
     assert p.get_info()["title"] == TITLE
 
 
