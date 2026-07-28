@@ -9,8 +9,8 @@ import hashlib
 import struct
 import time
 
-from ecdsa import VerifyingKey, SECP256k1, BadSignatureError
-from ecdsa.util import sigdecode_der
+from ecdsa import VerifyingKey, SigningKey, SECP256k1, BadSignatureError
+from ecdsa.util import sigdecode_der, sigencode_der
 
 CLA = 0xB5
 
@@ -27,6 +27,8 @@ INS_PRESS_REQUEST = 0x31
 INS_PRESS_OFFER = 0x32
 INS_PRESS_LOAD_ALBUM = 0x33
 INS_PRESS_ACCEPT = 0x34
+INS_PROVISION_ALBUM = 0x66
+INS_PROVISION_PRESSING = 0x67
 INS_GET_BUNDLE = 0x40
 INS_CHALLENGE = 0x41
 
@@ -330,3 +332,83 @@ def verify_possession(presse: Presse, pressing_cert: bytes):
     sig_len = body[0]
     sig = body[1 : 1 + sig_len]
     assert ecdsa_verify(recvpub, b"presse-verify" + nonce, sig), "challenge signature invalid"
+
+
+# --- relay-side certificate authority (development provisioning) ------------
+#
+# The device is the authority in a real ceremony: it generates the album key at
+# cut time and never lets it out. These builders exist so the RELAY can play the
+# master when a scene needs a copy whose number no two-device ceremony can
+# reach. See relay/provision.py and handlers/provision.rs.
+
+ALBUM_MAGIC = b"PRA1"
+PRESSING_MAGIC = b"PRP1"
+
+
+def ecdsa_sign(priv: bytes, payload: bytes) -> bytes:
+    """Sign SHA-256(payload), DER-encoded: what the device's verify expects."""
+    sk = SigningKey.from_string(priv, curve=SECP256k1)
+    return sk.sign_digest_deterministic(
+        hashlib.sha256(payload).digest(), sigencode=sigencode_der
+    )
+
+
+def demo_album_key(title: str, artist: str, edition: int) -> tuple[bytes, bytes]:
+    """A reproducible album keypair for provisioning, derived from the album's
+    own identity. Deterministic on purpose: the Edition ID shown on screen must
+    be the same across takes, and across a re-provision after an NVM wipe.
+    Development only, an album key is generated inside the device by a real cut."""
+    seed = hashlib.sha256(
+        b"presse-demo-album|" + f"{title}|{artist}|{edition}".encode()
+    ).digest()
+    sk = SigningKey.from_string(seed, curve=SECP256k1)
+    return seed, b"" + sk.get_verifying_key().to_string()
+
+
+def build_album_cert(
+    priv: bytes, albpub: bytes, title: str, edition: int, sleeve_hash: bytes, artist: str
+) -> bytes:
+    """Mirror of certs.rs build_album_cert. Layout is duplicated, not shared:
+    docs/protocol.md is the contract, and an independent re-implementation is
+    what catches a layout drift."""
+    title_b, artist_b = title.encode(), artist.encode()
+    assert 0 < len(title_b) <= TITLE_MAX, "title out of range"
+    assert len(artist_b) <= ARTIST_MAX, "artist too long"
+    assert len(sleeve_hash) == SLEEVE_HASH_LEN
+    cert = bytearray(ALBUM_CERT_LEN)
+    cert[0:4] = ALBUM_MAGIC
+    cert[4 : 4 + PUBKEY_LEN] = albpub
+    cert[69] = len(title_b)
+    cert[70 : 70 + len(title_b)] = title_b
+    struct.pack_into("<H", cert, 102, edition)
+    cert[104 : 104 + SLEEVE_HASH_LEN] = sleeve_hash
+    cert[ARTIST_LEN_OFF] = len(artist_b)
+    cert[ARTIST_OFF : ARTIST_OFF + len(artist_b)] = artist_b
+    sig = ecdsa_sign(priv, bytes(cert[:ALBUM_PAYLOAD_LEN]))
+    cert[ALBUM_PAYLOAD_LEN] = len(sig)
+    cert[ALBUM_PAYLOAD_LEN + 1 : ALBUM_PAYLOAD_LEN + 1 + len(sig)] = sig
+    return bytes(cert)
+
+
+def build_pressing_cert(
+    priv: bytes, album_id: bytes, number: int, edition: int, recvpub: bytes
+) -> bytes:
+    """Mirror of certs.rs build_pressing_cert."""
+    assert len(album_id) == 32 and len(recvpub) == PUBKEY_LEN
+    assert 0 < number <= edition, "number outside the edition"
+    cert = bytearray(PRESSING_CERT_LEN)
+    cert[0:4] = PRESSING_MAGIC
+    cert[4:36] = album_id
+    struct.pack_into("<HH", cert, 36, number, edition)
+    cert[40 : 40 + PUBKEY_LEN] = recvpub
+    sig = ecdsa_sign(priv, bytes(cert[:PRESSING_PAYLOAD_LEN]))
+    cert[PRESSING_PAYLOAD_LEN] = len(sig)
+    cert[PRESSING_PAYLOAD_LEN + 1 : PRESSING_PAYLOAD_LEN + 1 + len(sig)] = sig
+    return bytes(cert)
+
+
+def provision_pressing(presse: "Presse", album_cert: bytes, pressing_cert: bytes):
+    """Push a relay-signed pressing into a device. Refused if it already holds
+    one: provisioning only ever adds a record, so "bound forever" stays true."""
+    presse.cmd(INS_PROVISION_ALBUM, album_cert)
+    presse.cmd(INS_PROVISION_PRESSING, pressing_cert)

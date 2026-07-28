@@ -29,6 +29,7 @@ mod handlers {
     pub mod info;
     pub mod pair;
     pub mod press;
+    pub mod provision;
     pub mod verify;
 }
 
@@ -102,6 +103,8 @@ pub enum Instruction {
     GetBundle { part: u8 },
     Challenge,
     ResetMaster,
+    ProvisionAlbum,
+    ProvisionPressing,
 }
 
 impl TryFrom<ApduHeader> for Instruction {
@@ -130,7 +133,9 @@ impl TryFrom<ApduHeader> for Instruction {
             (0x40, part @ (0 | 1), 0) => Ok(Instruction::GetBundle { part }),
             (0x41, 0, 0) => Ok(Instruction::Challenge),
             (0x50, 0, 0) => Ok(Instruction::ResetMaster),
-            (0x01 | 0x02 | 0x10 | 0x21..=0x25 | 0x30..=0x34 | 0x40 | 0x41 | 0x50 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65, _, _) => {
+            (0x66, 0, 0) => Ok(Instruction::ProvisionAlbum),
+            (0x67, 0, 0) => Ok(Instruction::ProvisionPressing),
+            (0x01 | 0x02 | 0x10 | 0x21..=0x25 | 0x30..=0x34 | 0x40 | 0x41 | 0x50 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65 | 0x66 | 0x67, _, _) => {
                 Err(AppSW::WrongP1P2)
             }
             (_, _, _) => Err(AppSW::InsNotSupported),
@@ -167,6 +172,7 @@ fn warrants_library_redraw(ins: Instruction) -> bool {
             | Instruction::PressOffer
             | Instruction::PressAccept
             | Instruction::ResetMaster
+            | Instruction::ProvisionPressing
             // UI-only: they cover the library, so it must be repainted under
             // them, but they change nothing (SAS confirmation, the record card,
             // the art-test probe).
@@ -314,6 +320,10 @@ fn handle_apdu<'a>(
         Instruction::GetArt { chunk, slot } => handlers::art::handler_get_art(command, chunk, slot),
         Instruction::Cut => handlers::cut::handler_cut(command),
         Instruction::ResetMaster => handlers::cut::handler_reset_master(command),
+        Instruction::ProvisionAlbum => handlers::provision::handler_provision_album(command, session),
+        Instruction::ProvisionPressing => {
+            handlers::provision::handler_provision_pressing(command, session)
+        }
         Instruction::PairCommit => handlers::pair::handler_commit(command, session),
         Instruction::PairRespond => handlers::pair::handler_respond(command, session),
         Instruction::PairReveal => handlers::pair::handler_reveal(command, session),
