@@ -307,8 +307,8 @@ Refus possibles: `WrongApduLength` si `title_len` vaut 0 ou dépasse 32, ou si
 l'artiste dépasse 13 octets; `BadCert` si l'édition vaut 0; `HasMaster`
 (`0xB106`) si le device tient déjà un master.
 
-Le plafond de 13 octets sur l'artiste n'est pas cosmétique: l'AlbumCert (223) +
-MAC (32) doit tenir dans un `Lc` de 255.
+Le plafond de 13 octets sur l'artiste vient d'une contrainte de trame:
+l'AlbumCert (223) + MAC (32) doit tenir dans un `Lc` de 255.
 
 ---
 

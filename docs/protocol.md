@@ -291,7 +291,8 @@ Tapping a row opens the **record card**, a two-page generic review:
   therefore lives on the **Device ID** page, beside the device that holds
   the record now: the one handover this device can prove, named by fingerprint,
   and the number of holders before it, carried with the copy and unproven. A
-  count and not a list, because the trail is unbounded and the page is not.
+  count and not a list, because the trail is unbounded and the page holds four
+  rows.
 
 The sub-pages carry the explanations, one fact each: what the numbering means
 and that the counter is sealed in the chip; what the Edition ID is and to
@@ -326,8 +327,8 @@ four-word pairing as a press; only the payload differs.
 
 Erasing the copy in the write that releases the key makes double spending
 impossible and makes a dropped cable **destroy the copy**. That is the worse
-failure: an owner losing a record to a bad USB port is not a threat model, it is
-a defect. So the dangerous write is a *commitment*, not a deletion.
+failure: an owner losing a record to a bad USB port is a defect. So the dangerous
+write is a *commitment*.
 
 The giver's state machine. `committed` is one byte with three values, because
 *when the key left* is the line between a promise and a fact:
@@ -462,8 +463,8 @@ uninstall.** The device key, the album key, the counter, the bearer key of the
 copy held: all of it lives in `.nvm_data`, which BOLOS wipes when the app is
 removed, and every update removes and reloads the app. There is no flag to set.
 
-This is not an oversight that a later lot will fix. BOLOS does offer a place for
-app data to survive an update -- App Storage, a `.storage_section` that Ledger
+This is permanent by design. BOLOS does offer a place for app data to survive an
+update -- App Storage, a `.storage_section` that Ledger
 Live backs up to the phone or the desktop and restores afterwards -- and this app
 deliberately declares none. The reason is that the backup/restore protocol
 carries no freshness: nothing in it tells the device whether the blob being
@@ -473,9 +474,9 @@ month, a hundred presses ago. A restorable snapshot of `.nvm_data` is therefore 
 press those numbers again; rewind a copy to before it was given away and hold it
 while the recipient also holds it. Every invariant in this document rests on a
 counter that only counts down and a commitment that is never widened, and both
-are exactly what a rollback undoes. Declaring no storage section is not the
-absence of a backup feature, it is anti-rollback by construction: there is
-nothing to restore because there was never anything to save.
+are exactly what a rollback undoes. Declaring no storage section is anti-rollback
+by construction: there is nothing to restore because there was never anything to
+save.
 
 **The official update procedure is therefore succession, not backup.** Records
 move between devices the only way they ever move, through the ceremony:

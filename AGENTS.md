@@ -37,7 +37,7 @@ art, a 1bpp square hashed into the album cert), bearer key (the secp256k1 scalar
 copy is bound to; holding it IS holding the copy).
 Never "mint/child/mother/token".
 
-Two ids on screen, and they are not interchangeable: **Device ID** is
+Two ids on screen, each naming a different thing: **Device ID** is
 `SHA256(devpub)[:8]`, one device's own name (the back of its card, its empty
 library, and every screen naming the other side of a ceremony); **Edition ID** is
 `SHA256(albpub)[:8]`, the edition's name, identical on every copy of it and the

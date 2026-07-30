@@ -29,9 +29,9 @@ Speculos, which is how the test suite checks it.
 Streaming turned every song, book and film into a rental. This makes a digital
 work ownable again, as a numbered object with real scarcity:
 
-- **The scarcity is physical, not promised.** The edition size lives inside a
-  tamper-resistant secure element. Once an artist cuts a master of 5, even they
-  cannot press a sixth. No server enforces it; no one can quietly mint more.
+- **The scarcity is physical.** The edition size lives inside a tamper-resistant
+  secure element. Once an artist cuts a master of 5, even they cannot press a
+  sixth. No server enforces it; no one can quietly mint more.
 - **You hold one specific copy.** "4 of 5", bound to a key only your chip has,
   provable on the spot by a tap. The files can leak everywhere; being one of the
   five cannot be copied.
@@ -211,11 +211,10 @@ Same four-word pairing, different payload. The recipient is asked first, on a
 copy whose certificates it has already verified in full, so a refusal or a bad
 certificate costs the giver nothing: it has not been asked anything yet.
 
-The giver's side is the one part of this that is not obvious. **Erasing and
-delivering cannot be atomic across two devices.** If the write that releases the
-key is also the write that erases it, a dropped cable destroys somebody's
-record. So the dangerous write is a *commitment*, not a deletion, and the
-giver's state has three values rather than two:
+**Erasing and delivering cannot be atomic across two devices.** If the write
+that releases the key is also the write that erases it, a dropped cable destroys
+somebody's record. So the dangerous write is a *commitment*: it records the one
+recipient the copy is owed to, and the giver's state takes three values:
 
 ```
    free  --GIVE_OFFER p1=0-->  promised  --GIVE_OFFER p1=1-->  flown  --receipt-->  gone
@@ -271,34 +270,32 @@ On the record's `Device ID` page, beside the device that holds it now:
 
 ## Threat model
 
-Two promises, and they are not equal:
+Two promises:
 
 1. **A copy is never duplicated.**
 2. **A copy is never lost by accident.**
 
-They conflict, and this design breaks the second one: every ambiguous moment
-resolves toward "possibly lost, definitely not doubled". A system that
-occasionally loses a record is having a bad day, a system that occasionally
-duplicates one has nothing left to sell.
+Promise 1 wins wherever the two conflict, so this design breaks promise 2: every
+ambiguous moment resolves toward "possibly lost, definitely not doubled".
+Scarcity is the whole product, and a duplicate costs more than a loss.
 
-The first promise is not held up by cryptography alone. It rests on the secure
-element genuinely erasing a key it reports as erased, and on **two humans reading
-four words to each other**: confirm mismatched words on both screens and the
-relay in the middle keeps a working copy of the record, permanently and
-undetectably. That is the only way a second copy can ever come into existence,
-and it is why the four words are the one moment nobody should rush.
+Promise 1 rests on two things: the secure element genuinely erasing a key it
+reports as erased, and **two humans reading four words to each other**. Confirm
+mismatched words on both screens and the relay in the middle keeps a working copy
+of the record, permanently and undetectably. That is the only way a second copy
+can ever come into existence, and it is why the four words are the one moment
+nobody should rush.
 
-Three things this does not do, each by decision and not by schedule: it does not
-attest that the peer is a genuine Ledger (any Ledger works, and no company sits
-in the trust path), it does not back anything up (a restorable snapshot would be
-a rollback primitive), and it has no witness device (designed, unbuilt, see
-below).
+Three things this does not do, by decision: it does not attest that the peer is a
+genuine Ledger (any Ledger works, and no company sits in the trust path), it does
+not back anything up (a restorable snapshot would be a rollback primitive), and
+it has no witness device (designed, unbuilt, see below).
 
 [**docs/threat-model.md**](docs/threat-model.md) carries the case analysis: what
 each promise rests on, why a Ledger app cannot prove to a peer that it is a
 Ledger and what that costs, every way a copy can be lost with its window and its
-ordinary physical analogue, the interruption that looks like a loss and is not,
-what is out of scope, and the non-goals in full.
+ordinary physical analogue, the interruption that costs nothing, what is out of
+scope, and the non-goals in full.
 
 ## Updates and survivability
 
@@ -307,9 +304,9 @@ uninstall.** Device key, album key, counter, the bearer key of the copy held:
 all of it lives in `.nvm_data`, which BOLOS wipes when the app is removed, and
 every update removes and reloads the app. There is no flag to set.
 
-This is not a gap a later version will close. BOLOS *does* offer a place for app
-data to survive an update (App Storage, a `.storage_section` that Ledger Live
-backs up and restores) and **this app deliberately declares none**, because that
+This is permanent by design. BOLOS *does* offer a place for app data to survive
+an update (App Storage, a `.storage_section` that Ledger Live backs up and
+restores) and **this app deliberately declares none**, because that
 backup carries no freshness: a restorable snapshot of this NVM is a
 **state-rollback primitive**, and rewinding a master to before its last presses
 or a copy to before it was given away is exactly what every invariant here
@@ -339,9 +336,9 @@ capability into the project that is not there.
 - **The witness.** A third chip that lends its memory to a transfer, so a copy
   could be backed up, or sent to someone who is not in the room, without the
   snapshot becoming replayable. It is the obvious answer to both the "device
-  destroyed at rest" and "recipient never returns" cases, and it is the reason
-  App Storage was rejected rather than merely postponed: the freshness that a
-  Ledger Live backup lacks is exactly what a live third party can supply.
+  destroyed at rest" and "recipient never returns" cases, and it is why App
+  Storage was rejected outright: the freshness that a Ledger Live backup lacks
+  is exactly what a live third party can supply.
 - **Who can serve as a witness at all.** With no attestation, a witness device
   cannot prove it is a genuine Ledger, which is most of what you would
   want from one. The one exception is the **artist's master**: it can prove
@@ -420,5 +417,4 @@ the four sub-pages behind it (the number, the Edition ID, the Device ID with the
 provenance on it, and Learn more). 61 tests over one or two emulated Flex, and
 the ceremony filmed on two physical ones.
 
-Not shipping, by decision rather than by schedule: remote attestation, any
-backup, and the witness.
+Not shipping, by decision: remote attestation, any backup, and the witness.
