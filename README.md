@@ -289,7 +289,7 @@ nobody should rush.
 Three things this does not do, by decision: it does not attest that the peer is a
 genuine Ledger (any Ledger works, and no company sits in the trust path), it does
 not back anything up (a restorable snapshot would be a rollback primitive), and
-it has no witness device (designed, unbuilt, see below).
+it has no witness device (designed but not built, see below).
 
 [**docs/threat-model.md**](docs/threat-model.md) carries the case analysis: what
 each promise rests on, why a Ledger app cannot prove to a peer that it is a
@@ -328,7 +328,7 @@ reading four words to each other, and at no moment is a copy usable twice.
 and the one thing it must never become is a place where a copy of a device's
 state sits waiting to be put back.
 
-## Designed, not built
+## Designed but not built
 
 Neither of these exists in the code. They are recorded here so nobody reads a
 capability into the project that is not there.
@@ -409,7 +409,7 @@ the boot-check procedure.
 
 ## What ships today
 
-Everything above except *Designed, not built* and the non-goals listed in
+Everything above except *Designed but not built* and the non-goals listed in
 [docs/threat-model.md](docs/threat-model.md):
 cut, pair, press, offline verify, give (three-state commitment, cancel, resume),
 sleeve art sealed into the album certificate, the library, the record card and
