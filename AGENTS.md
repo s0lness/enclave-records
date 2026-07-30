@@ -19,7 +19,10 @@ thesis (physical editions of digital works, no chain, no server).
 - `relay/` - dumb APDU shuttle between the two devices (TCP to Speculos, HID to real
   Flexes). Holds no secrets; the protocol assumes it is hostile.
 - `docs/protocol.md` - the ceremony protocol (commit-reveal ECDH pairing, SAS words,
-  press certificates, threat model). Keep in sync with the code.
+  press certificates, wire formats, APDU map). Keep in sync with the code.
+- `docs/threat-model.md` - what the two promises rest on, every way a copy can be
+  lost, why there is no attestation, what is out of scope. The README carries only a
+  summary and links here.
 - `CEREMONIE-VIDEO.md` - runbook for the filmed ceremony on the two real Flexes with
   the Lot 1 build (French). Driven by `scripts/preflight.sh` (read-only pre-flight),
   `scripts/ceremony.sh` (the live relay) and `scripts/rehearse-emu.sh` (Speculos
