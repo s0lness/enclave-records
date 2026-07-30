@@ -1,4 +1,4 @@
-# Cérémonie cut / press LIVE, runbook vidéo (deux Flex physiques, build Lot 1)
+# Cérémonie cut / press LIVE, runbook vidéo (deux Flex physiques)
 
 But: filmer une cérémonie complète Enclave Records entre les deux Ledger Flex,
 le laptop servant de relais non fiable. Tout se pilote depuis WSL Ubuntu via
@@ -9,27 +9,31 @@ Build actuellement flashé sur les deux Flex:
 | | |
 |---|---|
 | Worktree | `C:\Users\sylve\projects\presse-video` |
-| Branche | `lot1-ui-polish` |
-| Commit | `28c6371` + les correctifs deux-emplacements / library en liste |
-| `data_size` | 17408 |
-| Hash app | `c4fe77fc9f27641d…` |
-| NVM | vierge des deux côtés après re-sideload (aucun master, aucun pressage) |
+| Branche | `master` |
+| Commit source | `d27335c` (dernier commit touchant `device-app/`; les suivants ne changent que la doc) |
+| `text` | 74032 (plancher de la fenêtre de boot 74032..76080) |
+| `data_size` | 18944 |
+| Hash app | `a0f7870f35fbb82c…` (`device-app/target/flex/release/presse.sha256`) |
+| NVM | **à vérifier au pré-vol**: le tournage précédent a laissé un master et une copie sur les appareils |
 
 > Ce runbook ne vaut QUE pour ce build. Le worktree `presse-classic` porte une
 > version antérieure du protocole: son `relay/demo.py` construit la trame `CUT`
-> à l'ancien format et **le cut échouera** contre le Lot 1 (voir §5).
+> à l'ancien format et **le cut échouera** contre celui-ci (voir §5).
 
-> **La cession (§2c) exige un re-sideload.** Le build flashé ci-dessus lie encore
-> le pressage à l'appareil; les clés porteuses, `INS_GIVE_*`/`INS_TAKE_*` et le
-> nouveau format de `PRESS_OFFER` n'existent que dans le build courant du
-> worktree (`data_size` **18944**). Tant que les Flex ne sont pas reflashés, §2a
-> et §2b restent valables et §2c répondra `InsNotSupported`. Un re-sideload vide
-> la NVM: il faut refaire le cut, donc refilmer §2a.
+> Ce que porte le build flashé: la clé porteuse (une copie est liée à une clé,
+> pas à un appareil), la cession complète `INS_GIVE_*`/`INS_TAKE_*` avec son
+> annulation, le verso de fiche à quatre lignes (Number, Edition ID, Device ID,
+> Learn more) et la sous-page provenance. §2a, §2b et §2c sont donc tous
+> filmables sans reflasher.
 >
 > `data_size` 18944 est **à une page du plafond mesuré**: l'app cesse de démarrer
-> quelque part entre 18432 et 19456 (cf. `state.rs`). Le boot check passe trois
-> fois sur ce build, mais toute nouvelle croissance de `.nvm_data` doit être
-> re-vérifiée avant sideload, sinon l'app s'installe et meurt sans un mot.
+> quelque part entre 18432 et 19456. Le boot check passe trois fois sur ce build,
+> mais toute nouvelle croissance de `.nvm_data` doit être re-vérifiée avant
+> sideload, sinon l'app s'installe et meurt sans un mot (`AGENTS.md` donne la
+> fenêtre complète et la procédure).
+>
+> Reproduire exactement ce binaire: `scripts/build-video.sh`, puis comparer
+> `device-app/target/flex/release/presse.sha256` au hash du tableau.
 
 Le relais ne voit jamais de clé: chaque confirmation se fait sur l'écran du
 device. C'est le sens de l'étape des 4 mots.
@@ -69,8 +73,12 @@ device. C'est le sens de l'étape des 4 mots.
    wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse-video/scripts/preflight.sh
    ```
 
-   Doit afficher `2 Flex vu(s) en HID`, et pour chacun `has_master: False`,
-   `has_pressing: False`. Le `Device ID` imprimé est exactement celui que
+   Doit afficher `2 Flex vu(s) en HID`. `has_master` et `has_pressing` disent
+   l'état laissé par la prise précédente: **pour refilmer le cut il faut une NVM
+   vierge**, donc un re-sideload (`install-ca.sh` puis `scripts/load-video.sh`,
+   un seul device attaché à la fois). Si A tient déjà un master, `demo.py` saute
+   le cut et l'annonce, et §2b comme §2c restent filmables tels quels.
+   Le `Device ID` imprimé est exactement celui que
    l'écran de A affichera au moment du press (`For device XXXXXXXX`), et celui
    que chaque Flex montre lui-même (au verso de la fiche, ou sous le message
    d'une library vide): note lequel est `paths[1]`, c'est le futur destinataire B.
@@ -178,9 +186,12 @@ pas sur la page 2: celle-ci tient quatre lignes, pas cinq.
 > ou un certificat invalide ne coûtent rien: le donneur n'a pas encore été
 > sollicité.
 >
-> Seul cas sans retour: un appareil engagé envers un receveur qui ne revient
-> jamais garde un pressage inutilisable pour toujours. Il n'y a pas d'annulation
-> (ce serait exactement une primitive de double dépense).
+> Tant que la clé n'est pas partie, `give.sh --cancel` reprend la promesse (un
+> seul Flex attaché, confirmation sur son écran). Une fois la clé envoyée, seul
+> le reçu du destinataire libère le donneur: un appareil engagé envers un
+> receveur qui ne revient jamais garde un pressage inutilisable pour toujours, et
+> l'annulation y est refusée (`0xB10A`) parce qu'elle serait exactement une
+> primitive de double dépense.
 
 ### 2d. (option) Parcourir la collection d'un device
 
@@ -197,7 +208,7 @@ wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse-video/scripts/ceremony.
 
 ## 3. Ce qui s'affiche sur chaque device, quoi filmer
 
-Textes relevés sur le build Lot 1 (répétition Speculos, titre et artiste par
+Textes relevés sur le build flashé (répétition Speculos, titre et artiste par
 défaut). Sur l'écran, un titre long se coupe en deux lignes.
 
 ### Avant tout
@@ -268,11 +279,29 @@ keep or to hand on.
 ```
 
 Après le tap, la library de B repeint: **la vraie pochette RAM** + titre +
-`#1 of 5` / `Quit` `Open`. La pochette a été portée avant le `PRESS_ACCEPT`,
-donc le repaint montre directement la vraie image, jamais le fallback génératif.
+`#1 of 5`, au-dessus d'un pied de page `Quit` seul (la ligne elle-même est la
+cible tactile, il n'y a pas de bouton `Open`). La pochette a été portée avant le
+`PRESS_ACCEPT`, donc le repaint montre directement la vraie image, jamais le
+fallback génératif.
 
 **À filmer**: l'écran B, la pochette qui apparaît = preuve que le pressing a
 atterri.
+
+### La fiche du disque, sur B
+
+Taper la ligne de la library ouvre la fiche, en deux pages (pager `< 1 of 2 >`
+et `Back` en pied de page):
+
+- **page 1**: le grand `#1`, la pochette 160px avec son reflet, le titre en gras
+  et l'artiste dessous;
+- **page 2**: quatre lignes navigables, chacune ouvrant sa sous-page: `Number`
+  (`#1 of 5`), `Edition ID` (8 hex de `SHA256(albpub)`, la même sur toutes les
+  copies de l'édition), `Device ID` (8 hex de `SHA256(devpub)`, l'appareil qui la
+  tient) et `Learn more`. Quatre lignes toujours, quoi que tienne l'appareil.
+
+**À filmer**: la page 2, puis la sous-page `Device ID` (elle porte la provenance
+après une cession, voir §2c) et `Learn more`, qui dit ce que l'appareil prouve et
+ce qu'il ne prouve pas.
 
 ### Verify
 
@@ -283,7 +312,7 @@ Narration relais côté terminal, à laisser visible: `== presse: cut ==`,
 
 ---
 
-## 4. Format de la trame CUT (Lot 1)
+## 4. Format de la trame CUT (build courant)
 
 Utile seulement pour diagnostiquer un refus: `demo.py` construit la trame.
 
@@ -315,7 +344,7 @@ l'AlbumCert (223) + MAC (32) doit tenir dans un `Lc` de 255.
 ## 5. Pièges connus
 
 - **Ne PAS utiliser `presse-classic/relay/demo.py`.** Il envoie
-  `edition(2) || title` sans octet de longueur et sans artiste. Contre le Lot 1,
+  `edition(2) || title` sans octet de longueur et sans artiste. Contre ce build,
   le premier octet du titre est lu comme `title_len` (`R` = 82 > 32) et le device
   répond `WrongApduLength`: **le cut échoue**. Toutes les commandes de ce runbook
   passent par `presse-video`.
@@ -324,18 +353,20 @@ l'AlbumCert (223) + MAC (32) doit tenir dans un `Lc` de 255.
   cut**. Une NVM vidée par un re-sideload implique aussi `install-ca.sh` puis
   `scripts/load-video.sh` (un seul device attaché à la fois).
 - **Rôle A vs B non contrôlé par le branchement.** `paths[0]`=A, `paths[1]`=B
-  vient du tri des chemins HID. Les deux devices sont vierges aujourd'hui, donc
-  le cut tombera sur `paths[0]` quel qu'il soit: lancer `preflight.sh` pour
-  savoir lequel c'est **avant** de cadrer la caméra.
+  vient du tri des chemins HID, pas de l'ordre de branchement: lancer
+  `preflight.sh` pour savoir lequel est lequel, et lequel tient déjà quoi,
+  **avant** de cadrer la caméra.
 - **`usbipd` un-à-la-fois vs les deux.** Cérémonie: les deux attachés en même
   temps (obligatoire). Sideload: un seul à la fois. Si Windows n'en expose qu'un,
   relancer `attach-usb.ps1` (il boucle sur tous les `2c97`).
 - **Ledger Live doit être fermé**, sinon `enumerate_ledgers()` ne voit rien.
 - **Les APDU gated bloquent sans timeout** jusqu'au tap physique. Rien ne « rate »
   si on prend son temps: les 4 mots restent affichés tant qu'on n'a pas tapé.
-- **`scripts/env.sh`, `test.sh`, `emu-up.sh`, `demo-emu.sh` pointent sur le
-  checkout `../presse`.** Sans effet sur la cérémonie (qui n'utilise pas
-  `APP_ELF`), mais ne pas s'en servir pour juger le build Lot 1.
+- **`scripts/env.sh` pointe par défaut sur le checkout `../presse`**, et
+  `test.sh`, `emu-up.sh`, `demo-emu.sh` le sourcent. Ce sont des défauts, plus
+  des écrasements: exporter `APP_DIR`/`APP_ELF` avant l'appel suffit à les viser
+  ici. Sans effet sur la cérémonie (qui n'utilise pas `APP_ELF`), mais ne pas
+  s'en servir pour juger ce build sans avoir vérifié `APP_ELF`.
 - **Verify offline**: ne garder que B attaché et couper le wifi à l'image.
 - **Ne pas toucher au checkout `C:\Users\sylve\projects\presse`** (occupé).
 - **Un pressage se cède, et une cession interrompue se reprend.** Le certificat
@@ -364,8 +395,8 @@ l'AlbumCert (223) + MAC (32) doit tenir dans un `Lc` de 255.
 
 ## 6. Répéter sans consommer de master
 
-La cérémonie complète tourne sur deux Speculos, avec l'ELF Lot 1 de ce
-worktree, sans toucher au matériel:
+La cérémonie complète tourne sur deux Speculos, avec l'ELF de ce worktree, sans
+toucher au matériel:
 
 ```powershell
 wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse-video/scripts/rehearse-emu.sh --auto
@@ -384,7 +415,9 @@ pas le repaint de la pochette sur le receveur.
 
 - [ ] Deux Flex branchés, déverrouillés, Enclave Records ouverte, Ledger Live fermé.
 - [ ] `attach-usb.ps1` lancé depuis `presse-video`.
-- [ ] `preflight.sh`: **2 Flex**, les deux `has_master: False`.
+- [ ] `preflight.sh`: **2 Flex**, et `has_master`/`has_pressing` notés pour
+      chacun (les deux à `False` si le cut doit être refilmé, donc après
+      re-sideload).
 - [ ] Empreinte de `paths[1]` notée (elle apparaîtra à l'écran du press).
 - [ ] Commande §2a prête, pointant sur `presse-video`.
 - [ ] Caméra cadrée sur les deux écrans (mots SAS côte à côte) + un plan terminal.
