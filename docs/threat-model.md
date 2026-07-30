@@ -51,6 +51,59 @@ same attack merely wasted a press. A copy that can be handed on by sending a key
 can be stolen by reading that key. Which is why the four words are the moment the
 whole ceremony is built around, and the one moment nobody should rush.
 
+## What the provenance chain adds, and what it does not
+
+Nothing above changes: a copy that reaches software can be cloned, every clone
+answers the possession challenge, and no protocol can tell them apart by looking
+at one of them. The chain does not prevent that and is not offered as prevention.
+It attacks the *second* half of the problem: a clone that never moves again is
+worth little, and a clone that circulates has to be handed on, which is where it
+becomes attributable.
+
+**What is refused at the door.** The chain head is a field of the message the
+giver signs, so a giver cannot hand over one head and sign another, and a link is
+bound to one moment of one copy's history. Forging a link, editing a head in
+flight, replaying a genuine link from earlier in that history, and grafting one
+from another copy all need a signature over a head that never occurred. Those
+four are the ones the old unsigned ring could not even see, since any holder
+could simply rewrite its own trail.
+
+**What is only caught afterwards, and why.** Storing the chain would mean 72
+bytes of signature per hop; thirty-two hops is 2.3 KB, and this app has neither
+the NVM nor the flash for it (see the window in AGENTS.md). So a device keeps a
+32-byte rolling hash, and a receiver therefore holds a commitment rather than the
+witnesses behind it: it cannot replay a history it is handed. Two consequences,
+both accepted openly:
+
+- **A modified giver can truncate.** It can present its copy at the root and
+  claim it never travelled. This device will take it. The lie is not consistent
+  with the link by which that device received the copy, which names it as taker
+  at a head of its own, so the two witnesses are about one copy and cannot both
+  be true. Detection by comparison, not refusal.
+- **A fork is an accusation, not yet a verdict.** Two links out of one head,
+  signed by one device key, toward two different recipients, is that device
+  signing two futures for one copy, and both signatures verify under its own key,
+  so no testimony is involved. But phase one of a give changes nothing on either
+  device, so an honest holder shopping a copy around several candidates produces
+  the same shape. **Duplication is proven when both branches show possession** --
+  a challenge answered, or a further link, since a device signs a handover only
+  for a copy it holds. The signatures give the attribution; possession gives the
+  proof.
+
+This is the same posture v1 already takes on over-pressing: with no attestation
+available, the fallback is fraud evidence rather than prevention. The chain moves
+duplication from "permanent, undetectable, and indistinguishable from the real
+one" to "detectable the moment two histories of one copy are put side by side,
+and attributable to the device where they split". A transparency log of witnesses
+would make that instant; nothing here needs one to exist.
+
+**What would close the truncation hole**, and what it costs: binding the first
+recipient into the PressingCert, so that "straight from the press" is a claim
+only one device can make. It is four bytes in a signed certificate that today
+deliberately names no device (`docs/protocol.md`, Press semantics), and it would
+make every copy reveal its first owner to anyone who reads `GET_BUNDLE`. Not
+taken here.
+
 ## Why there is no attestation, and what that costs
 
 The gap: nothing proves to a peer that the device across the cable is a genuine
@@ -137,9 +190,11 @@ What a copy does reveal, it reveals to whoever is holding it:
   channel.
 - **The previous holder**, named by fingerprint on the Device ID page and proven
   by that device's signed handover record.
-- **How far the copy has travelled**: a count of the holders before that one,
-  from the unsigned ring that travels with the copy. The ring keeps 32
-  fingerprints and drops the oldest, so a much-handed copy understates.
+- **How far the copy has travelled**: a count of the holders before that one.
+  The count is display only and saturates at 255; the chain head behind it is a
+  32-byte commitment to every hop, in order, and forgets nothing however far the
+  copy has gone. The names of the earlier holders are *not* revealed: a digest is
+  not a roll, and only someone already holding a link can check it against one.
 - **The two sides of a transfer learn each other.** The taker gets the giver's
   fingerprint inside the MACed handover frame, and the giver confirms the
   taker's on screen. A give that completes leaves the giver with a flag saying a
@@ -155,6 +210,11 @@ a public ledger or to an anonymous token.
 
 - **Breaking the secure element.** Extracting a key from the chip breaks
   everything, and it is a stated bet.
+- **Replaying a history from a digest.** A receiver cannot verify the hops
+  behind the head it is handed, and this is a size constraint, not an oversight:
+  see *What the provenance chain adds*. Auditing a history means collecting the
+  witnesses (`GET_BUNDLE p1=2` on each device that held the copy, or a relay's
+  log), which is off-device work this project does not automate.
 - **The development provisioning path.** `relay/provision.py` plus
   `PROVISION_ALBUM` / `PROVISION_PRESSING` let a laptop act as the master: it
   mints the album key and the bearer key itself, signs both certificates, and
@@ -195,4 +255,6 @@ status](protocol.md#threat-model-status), naming the defence and the test that
 exercises it: relay key substitution, bearer-key substitution, rewriting who
 gave, the fooled-humans MITM, replay, commitment cheating, giving the same copy
 twice, a dropped frame mid-transfer, cancel used as a double spend, a forged
-receipt, over-pressing, and a swapped sleeve.
+receipt, over-pressing, a swapped sleeve, rewriting a copy's history (forged,
+head-substituted, replayed and grafted links), truncating one, and the fork a
+circulating duplicate leaves behind.

@@ -89,7 +89,9 @@ pub fn handler_provision_pressing<'a>(
     nvm.pressing_album_cert = staged_album;
     nvm.pressing_priv = bearer_priv;
     nvm.has_from = 0;
-    nvm.ring_len = 0;
+    nvm.chain = crate::handlers::give::chain_genesis(&pressing.album_id, pressing.number)?;
+    nvm.chain_prev = nvm.chain;
+    nvm.hops = 0;
     Store::put(&nvm);
     session.staged_album_valid = false;
 

@@ -81,6 +81,15 @@ value fingerprints a device's key, and the label has to say so.
   two instances is asserted through it.
 - The app opens on a **library** (the landing screen), not a home button; it is built
   from raw `nbgl_layout` and yields to APDUs so a ceremony works with it on screen.
+- A copy's history is a **32-byte rolling hash**, not a list: the giver signs the
+  head it received into the handover record, and the taker folds that record into
+  a new head. Constant size, constant verification cost, nothing ever dropped.
+  The point is evidence, not prevention: forged, head-substituted, replayed and
+  grafted links are refused at TAKE, but a *modified* giver can still truncate,
+  because a receiver holds a digest and not the witnesses (one signature per hop
+  is 72 bytes and does not fit). Never present the chain as making duplication
+  impossible: it makes a circulating duplicate fork, and the fork names the
+  device that split it. See docs/protocol.md, "The provenance chain".
 - A copy is bound to a **bearer key**, not to a device, and a give is a **two-phase
   commit**: `GIVE_OFFER` atomically commits the copy to one named recipient (still
   in flash, but silent and un-offerable elsewhere), and only that recipient's
@@ -103,9 +112,12 @@ value fingerprints a device's key, and the label has to say so.
   `--features artprobe,uiprobe` lands at `text` 77104, outside the boot window;
   each alone boots (76080 and 75568). Build with `build.sh -- --features
   artprobe`.
-- `.nvm_data` is nearly full: `data_size` is 18944 and the app stops booting
+- `.nvm_data` is nearly full: `data_size` is 18432 and the app stops booting
   somewhere between 18432 and 19456. Re-run the boot check after *any* NVM struct
-  change, or the app installs and dies without a message.
+  change, or the app installs and dies without a message. (It read 18944 until the
+  provenance chain replaced the 129-byte display ring with a 65-byte head + hop
+  count, which freed 64 bytes of `PresseNvm` and dropped `data_size` one 512-byte
+  step with `text` unmoved.)
 - From the code side it is a **window, not a ceiling**, and this is the single
   most misleading thing about this app. With the current NVM structs the app
   boots for a `text` anywhere in **74032..76080** and dies outside it *in both
@@ -119,7 +131,11 @@ value fingerprints a device's key, and the label has to say so.
   so the old "the ceiling is at `data_size` 18944" was this same phenomenon seen
   from the other side. Which pair goes with which depends on the NVM structs of
   the day, so read both numbers off the build rather than inferring one from the
-  other: the current build reports `text` 74032 *with* `data_size` 18944. The
+  other: the current build reports `text` 74032 *with* `data_size` 18432. **The
+  74032..76080 edges were swept against the NVM structs that predate the
+  provenance chain**, so treat them as a guide and not as measured for today's
+  layout; the only point verified against the current structs is the one the
+  build sits on (3x boot check, twice). The
   failure is silent either way: the app installs, panics before its first APDU
   (`exiting_panic` -> `exit_app(0)`, which the Speculos log shows as
   `exit called (0)`) and answers nothing. Read `text` from the build output and

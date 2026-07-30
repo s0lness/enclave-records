@@ -3,7 +3,6 @@
 
 use crate::certs::{ALBUM_CERT_LEN, PRESSING_CERT_LEN};
 use crate::crypto::{self, PUBKEY_LEN};
-use crate::state::RING_MAX;
 use crate::wordlist::WORDS;
 use crate::AppSW;
 
@@ -54,16 +53,19 @@ pub struct Session {
     /// PRESS_ACCEPT.
     pub staged_album: [u8; ALBUM_CERT_LEN],
     pub staged_album_valid: bool,
-    /// A transfer's pressing cert and holder ring, staged by the taker before
-    /// TAKE_ACCEPT. A copy's three pieces (album, pressing, ring) each exceed
-    /// what is left of a 255-byte frame once the others are in it, so they
-    /// arrive separately and are held here until the accept binds them
+    /// A transfer's pressing cert and provenance chain, staged by the taker
+    /// before TAKE_ACCEPT. A copy's three pieces (album, pressing, chain) each
+    /// exceed what is left of a 255-byte frame once the others are in it, so
+    /// they arrive separately and are held here until the accept binds them
     /// together. RAM only: an interrupted transfer leaves nothing behind.
     pub staged_pressing: [u8; PRESSING_CERT_LEN],
     pub staged_pressing_valid: bool,
-    pub staged_ring: [[u8; 4]; RING_MAX],
-    pub staged_ring_len: u8,
-    pub staged_ring_valid: bool,
+    /// The chain head the giver claims, and the hop count that goes with it.
+    /// Neither is trusted here: the head is a field of the message the handover
+    /// signature covers, so it is checked where that signature is checked.
+    pub staged_chain: [u8; 32],
+    pub staged_hops: u8,
+    pub staged_chain_valid: bool,
     /// The handover record staged by the taker: who is giving, and their
     /// signature over it. Verified at the confirmation and again at the accept,
     /// never here, so the relay stays free to stage in any order it likes.
@@ -100,9 +102,9 @@ impl Session {
             staged_album_valid: false,
             staged_pressing: [0; PRESSING_CERT_LEN],
             staged_pressing_valid: false,
-            staged_ring: [[0u8; 4]; RING_MAX],
-            staged_ring_len: 0,
-            staged_ring_valid: false,
+            staged_chain: [0; 32],
+            staged_hops: 0,
+            staged_chain_valid: false,
             staged_giverpub: [0; PUBKEY_LEN],
             staged_handover_sig: [0; crate::crypto::SIG_MAX_LEN],
             staged_handover_sig_len: 0,

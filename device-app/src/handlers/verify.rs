@@ -3,7 +3,21 @@ use crate::state::Store;
 use crate::AppSW;
 use ledger_device_sdk::io::{Command, CommandResponse};
 
-/// GET_BUNDLE: p1=0 -> PressingCert, p1=1 -> its AlbumCert. Public data.
+/// GET_BUNDLE: p1=0 -> PressingCert, p1=1 -> its AlbumCert, p1=2 -> the
+/// provenance witness. Public data.
+///
+/// The witness is what makes the chain evidence rather than an ornament:
+/// chain(32) || chain_prev(32) || hops(1) || has_from(1) || giverpub(65) ||
+/// sig_len(1) || sig(72) = 204 bytes. With it and the certificates, anyone can
+/// check the last link end to end -- the signature covers `chain_prev` and both
+/// devices, and hashing the link reproduces `chain` -- and can compare two
+/// copies claiming the same number. Two links signed by one device over one
+/// `chain_prev` toward two different takers is that device signing two futures
+/// for one copy, which is the whole point of keeping this readable.
+///
+/// A device that holds a copy answers it to any host with no confirmation
+/// screen, exactly as it already answers for the certificates: none of it is
+/// secret, and evidence nobody can collect is not evidence.
 pub fn handler_get_bundle(command: Command<'_>, part: u8) -> Result<CommandResponse<'_>, AppSW> {
     let nvm = Store::get()?;
     if nvm.has_pressing != 1 {
@@ -16,6 +30,14 @@ pub fn handler_get_bundle(command: Command<'_>, part: u8) -> Result<CommandRespo
         }
         1 => {
             response.append(&nvm.pressing_album_cert)?;
+        }
+        2 => {
+            response.append(&nvm.chain)?;
+            response.append(&nvm.chain_prev)?;
+            response.append(&[nvm.hops, nvm.has_from])?;
+            response.append(&nvm.pressing_from)?;
+            response.append(&[nvm.pressing_from_sig_len])?;
+            response.append(&nvm.pressing_from_sig)?;
         }
         _ => return Err(AppSW::WrongP1P2),
     }

@@ -33,8 +33,10 @@ Multi-byte integers little-endian.
   what makes a copy transferable an unbounded number of times: handing it on is
   sending the scalar and forgetting it, and costs no storage. A delegation chain
   would instead grow by one signed link per change of hands and cap out around
-  sixteen. The album key signs once, at the press, and need not still exist for
-  the copy to move afterwards.
+  sixteen; the provenance chain records the same hops in a 32-byte rolling hash
+  and caps out nowhere, at the price of being evidence rather than authority.
+  The album key signs once, at the press, and need not still exist for the copy
+  to move afterwards.
 
 ## Certificates
 
@@ -92,13 +94,86 @@ SHA256(art) == sleeve_hash (and rejects an all-zero hash as "no sleeve").
 ### Handover record (signed by the giver's devkey, at TRANSFER)
 ```
 "presse-handover" || album_id(32) || number(2 LE) || giverpub(65) || takerpub(65)
+                  || chain(32)
 ```
 
-The one step of provenance that is *proven*. It travels with the copy and the
-taker stores it. Both devices are named, so a signature cannot be lifted from
-one handover onto another. Everything further back is the **ring**: up to 32
-four-byte holder fingerprints, unsigned, carried along with the copy, display
-only. It says where the copy has been; it does not prove it.
+The one step of provenance that is proven *live*. It travels with the copy and
+the taker stores it. Each field stops one substitution: `album_id` and `number`
+stop the signature being lifted onto a different copy, the two device keys stop
+it being lifted onto a different pair, and `chain` -- the head of the provenance
+chain as the giver received it -- stops it being lifted onto a different
+*moment* of this copy's own history. Everything further back is that chain.
+
+## The provenance chain
+
+A copy is a bearer scalar. If it ever reaches software rather than a secure
+element, that software can clone it, and every clone signs the possession
+challenge and verifies as genuine. The edition stays capped -- the album key
+never leaves the master, so no new numbers -- but one of the N copies can exist
+several times. Attestation would prevent it and is
+[not available](threat-model.md#why-there-is-no-attestation-and-what-it-costs).
+The chain is the mitigation that is available: not prevention, but **detection
+and attribution**.
+
+```
+C0     = SHA256("presse-chain" || album_id(32) || number(2 LE))
+Ck     = SHA256("presse-link" || C(k-1) || giverpub(65) || sig_len(1)
+                              || sig(72, zero-padded) || takerpub(65))
+```
+
+`C0` is derived from the copy's own signed identity, so every verifier computes
+it and nothing transmits it; two copies never share a root. Each transfer folds
+the giver's handover record into the head, and the giver signs the head it
+received. The taker stores the new head, the head before it, and the giver's
+signature.
+
+**What each part stops.**
+
+- **The head is in the signed message.** A giver cannot hand over one head and
+  sign another: the signature verifies against the head the taker was sent, so a
+  head edited in flight, or invented by its holder, fails at TAKE. Refused
+  on-device.
+- **The head is the hash of the whole history.** A link belongs to one moment.
+  Replaying a genuine link from earlier in the same copy's history, reordering
+  two of them, or grafting a link from another copy needs a signature over a head
+  that never occurred. Refused on-device.
+- **The signature is inside the digest.** A head commits to the proof of its own
+  last hop, not merely to its shape.
+- **Two links out of one head fork the chain.** A device that duplicated a copy
+  has to hand each duplicate on, and each handover extends the head the copy was
+  at. Two links from one head, signed by one device key, toward two different
+  recipients, is that device signing two futures for one copy. Both signatures
+  verify under its own key, so the accusation needs nobody's testimony.
+
+**What it costs, and what that buys.** One signature per hop is 72 bytes and
+thirty-two of them are 2.3 KB, which fits neither the wire, the NVM, nor the
+flash window this app lives in. So the device keeps a rolling hash and not the
+witnesses: **32 bytes, constant, whatever the copy's history**. Verification at
+TAKE is therefore O(1) -- one ECDSA check and one SHA-256, the same work at a
+thousand hops as at one -- and there is no bound to reach and no oldest entry to
+drop. That is the whole reason this replaces the ring it replaces, which kept 32
+four-byte fingerprints, cost 129 bytes, proved nothing, and forgot the beginning
+of a copy that travelled far.
+
+**What it does not do.** A receiver holds a commitment, not the witnesses, so it
+cannot replay a history it is handed. A giver running a *modified* app can
+present its copy at the root and claim it never travelled, and this device will
+take it. What the liar cannot do is make that claim consistent: the link by which
+it received the copy names it as taker at a head of its own, and the copy it
+hands on carries a different one. The two witnesses concern the same copy, cannot
+both be true, and name the same device. Truncation is therefore caught by
+comparison, after the fact, exactly like the fork -- never refused at the door.
+This is a fraud-evidence design, and it is the same posture v1 already takes on
+over-pressing.
+
+**Reading the evidence off a device.** `GET_BUNDLE p1=2` returns the witness:
+`chain(32) || chain_prev(32) || hops(1) || has_from(1) || giverpub(65) ||
+sig_len(1) || sig(72)`, 204 bytes, to any host with no confirmation screen (none
+of it is secret, and evidence nobody can collect is not evidence). With the two
+certificates it is checkable end to end: the signature verifies over
+`chain_prev`, hashing the link reproduces `chain`, and a copy claiming no history
+must show the genesis its own certificate implies. `hops` is display only and
+saturates at 255; the head does not saturate and does not forget.
 
 ## Pairing (commit-then-reveal ECDH, 4-word SAS)
 
@@ -159,7 +234,8 @@ and give another) from sharing a pad and publishing the XOR of two keys.
                     -> PressingCert(178) || sealed bearerkey(32) || mac(32)    [242]
 0x33 PRESS_LOAD_ALBUM (receiver) data=AlbumCert||mac  -> ok (staged)           [255]
 0x34 PRESS_ACCEPT   (receiver) data = the PRESS_OFFER reply, verbatim [UI]     [242]
-0x40 GET_BUNDLE     p1=0 PressingCert, p1=1 its AlbumCert (public)
+0x40 GET_BUNDLE     p1=0 PressingCert, p1=1 its AlbumCert,
+                    p1=2 provenance witness (204). All public.
 0x41 CHALLENGE      data=nonce(32) -> sig_len(1) || DER sig by the held copy's
                     bearerkey over SHA256("presse-verify" || nonce).
                     NoPressing when the device holds no copy.
@@ -177,12 +253,12 @@ and give another) from sharing a pad and publishing the XOR of two keys.
   Phase 1, free to abandon -- nothing on either device has changed yet:
 0x70 GIVE_ALBUM     (giver, paired)   -> AlbumCert(223) || mac(32)             [255]
 0x71 GIVE_PRESSING  (giver, paired)   -> PressingCert(178) || mac(32)          [210]
-0x72 GIVE_RING      (giver, paired)   -> ring_len(1) || ring(128) || mac(32)   [161]
+0x72 GIVE_CHAIN     (giver, paired)   -> chain(32) || hops(1) || mac(32)        [65]
 0x78 GIVE_HANDOVER  (giver) data = taker devpub(65) || mac(32)                  [97]
                     -> giverpub(65) || sig_len(1) || handover sig(72) || mac   [170]
 0x74 TAKE_ALBUM     (taker, paired) data = AlbumCert || mac    -> ok (staged)  [255]
 0x75 TAKE_PRESSING  (taker, paired) data = PressingCert || mac -> ok (staged)  [210]
-0x76 TAKE_RING      (taker, paired) data = ring_len || ring || mac -> ok       [161]
+0x76 TAKE_CHAIN     (taker, paired) data = chain || hops || mac -> ok           [65]
 0x7A TAKE_HANDOVER  (taker, paired) data = the GIVE_HANDOVER reply -> ok       [170]
 0x7B TAKE_CONFIRM   (taker, paired) no data [UI] -> ok    (the FIRST human)      [0]
   Phase 2, the commitment and its release:
@@ -204,8 +280,8 @@ change nothing.
 [UI] = blocks on an explicit user confirmation on the device screen, drawn
 over the library (the landing screen), which yields to the incoming APDU.
 `[n]` is the frame's data length; every one is inside the 255-byte limit, and
-that limit is why the album cert, the pressing cert and the ring each travel in
-their own command instead of together.
+that limit is why the album cert, the pressing cert and the chain each travel
+in their own command instead of together.
 
 The taker's public key is asked for with PRESS_REQUEST: a transfer needs
 exactly what a press needs from the other side, so there is one command for it
@@ -290,9 +366,9 @@ Tapping a row opens the **record card**, a two-page generic review:
   count is fixed by the type of the array the rows are built into. Provenance
   therefore lives on the **Device ID** page, beside the device that holds
   the record now: the one handover this device can prove, named by fingerprint,
-  and the number of holders before it, carried with the copy and unproven. A
-  count and not a list, because the trail is unbounded and the page holds four
-  rows.
+  and the number of holders before it, carried with the copy and unproven *to
+  this device*. A count and not a list, because the chain is a digest and not a
+  roll of names, the trail is unbounded, and the page holds four rows.
 
 The sub-pages carry the explanations, one fact each: what the numbering means
 and that the counter is sealed in the chip; what the Edition ID is and to
@@ -445,8 +521,9 @@ the provenance the taker stores names the device it actually paired with.
 
 - The cover travels too (giver's pressing slot -> taker's pressing slot), before
   the confirmation, so the taker's single repaint shows the real sleeve.
-- The taker appends the giver's fingerprint to the ring it received: the giver is
-  the one hop it can attest to. Oldest entries drop past 32.
+- The taker folds the giver's signed handover into the chain head it received,
+  and keeps that head, the head before it, and the signature. Nothing is ever
+  dropped: the head is 32 bytes at one hop and at a thousand.
 - A committed copy's library row reads `#N of M - promised, reconnect XXXXXXXX`:
   it is still on the shelf, still recoverable, and the only thing that finishes
   it is re-running the ceremony with that one recipient. So the row states the
@@ -507,6 +584,19 @@ behind these choices, and the losses they knowingly accept, are in
   dies on the album signature, which covers it. (tested, M4 and test_give)
 - Relay rewrites who gave -> the handover signature no longer verifies under
   the name beside it, and the name is under the session MAC anyway. (tested)
+- Rewriting a copy's history -- forging a link, editing the chain head in flight,
+  replaying a genuine link from earlier in that copy's history, or grafting one
+  from another copy -> the head is a field of the signed handover, so all four
+  need a signature over a head that never occurred. (tested, test_give)
+- Truncating a history (a modified giver claiming its copy never travelled) ->
+  NOT refused: the receiver holds a digest, not the witnesses. Caught by
+  comparison with the link by which that device received the copy, which names it
+  at a different head. Fraud evidence, like over-pressing. (tested, test_give)
+- A duplicated copy that keeps circulating -> the two clones' handovers extend
+  the same head toward different recipients, so the chains fork at the device
+  that split it, under that device's own signature. A fork proves an attributable
+  split; duplication is proven when both branches show possession, since a device
+  signs a handover only for a copy it holds. (tested, test_give)
 - **Fooled humans + MITM -> the bearer key leaks.** A relay whose mismatched
   words were confirmed on both screens holds a session key on each side, so it
   can unmask the bearer key in flight and keep a working copy of it. This is a

@@ -231,10 +231,10 @@ struct CardData {
     /// master: only a transfer has a previous holder to name.
     received_from: String,
     /// How many holders came before that one. A count and not their
-    /// fingerprints: nothing signs them, so the names add no proof, and a list
-    /// that grows with every hop is a screen that eventually runs off its
-    /// bottom edge. The count states the same fact in a fixed number of
-    /// characters.
+    /// fingerprints: the proof of them is the chain digest, which is not
+    /// readable as a list of names, and a list that grows with every hop is a
+    /// screen that eventually runs off its bottom edge. The count states the
+    /// same fact in a fixed number of characters.
     earlier: u8,
 }
 
@@ -270,9 +270,9 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
             } else {
                 String::new()
             };
-            // The newest ring entry is the device the provenance names; only
-            // what lies behind it is "earlier".
-            let earlier = nvm.ring_len.min(crate::state::RING_MAX as u8).saturating_sub(1);
+            // The newest hop is the device the provenance names; only what lies
+            // behind it is "earlier".
+            let earlier = nvm.hops.saturating_sub(1);
             Ok(Some(CardData {
                 title: String::from(title_str(&album.title, album.title_len)?),
                 artist: String::from(title_str(&album.artist, album.artist_len)?),

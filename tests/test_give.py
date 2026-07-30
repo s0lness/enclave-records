@@ -20,14 +20,15 @@ from mitm import MitmEndpoint
 from presse_client import (
     ART_LEN,
     BEARER_KEY_LEN,
+    CHAIN_WIRE_LEN,
     INS_CHALLENGE,
     INS_GIVE_ALBUM,
     INS_GIVE_CANCEL,
+    INS_GIVE_CHAIN,
     INS_GIVE_FINISH,
     INS_GIVE_HANDOVER,
     INS_GIVE_OFFER,
     INS_GIVE_PRESSING,
-    INS_GIVE_RING,
     INS_PAIR_COMMIT,
     INS_PAIR_FINISH,
     INS_PAIR_RESPOND,
@@ -36,28 +37,30 @@ from presse_client import (
     INS_PRESS_REQUEST,
     INS_TAKE_ACCEPT,
     INS_TAKE_ALBUM,
+    INS_TAKE_CHAIN,
     INS_TAKE_CONFIRM,
     INS_TAKE_HANDOVER,
     INS_TAKE_PRESSING,
     INS_TAKE_RECEIPT,
-    INS_TAKE_RING,
-    RING_MAX,
-    RING_WIRE_LEN,
+    PUBKEY_LEN,
+    Presse,
     SIG_MAX_LEN,
     SLOT_MASTER,
     SLOT_PRESSING,
     SW_KEY_FLOWN,
     SW_NO_PRESSING,
     SW_OK,
-    Presse,
     apdu_hex,
     assert_page_fits,
     build_album_cert,
     build_pressing_cert,
+    chain_genesis,
+    chain_link,
     confirm_sas_both,
     demo_album_key,
     demo_bearer_key,
     ecdsa_sign,
+    ecdsa_verify,
     finish_give,
     give_cancel,
     give_commit,
@@ -67,6 +70,7 @@ from presse_client import (
     parse_pressing_cert,
     provision_pressing,
     read_art,
+    read_witness,
     row_labels,
     run_give,
     run_pairing,
@@ -74,6 +78,7 @@ from presse_client import (
     upload_art,
     verify_chain,
     verify_possession,
+    verify_witness,
 )
 
 # Short so a library row does not truncate it: the on-screen assertions compare
@@ -506,13 +511,16 @@ def confirm_sas_alone(p: Presse):
 
 def stage_a_copy(taker: Presse, giver: MitmEndpoint, number: int = 1,
                  sig: bytes | None = None, giverpub: bytes | None = None,
-                 ring_len: int = 0):
+                 hops: int = 0, chain: bytes | None = None,
+                 signed_chain: bytes | None = None):
     """Push a relay-built copy's four pieces into the taker's staging slots.
 
     `sig` and `giverpub` default to a correct handover from this endpoint; a
-    test overrides one of them to aim at exactly one check. `ring_len` hands the
-    copy a history of that many earlier holders, which is how a copy that has
-    changed hands more times than two emulators can is reached in one step.
+    test overrides one of them to aim at exactly one check. `chain` is the head
+    the endpoint hands over and `signed_chain` the head it actually signs: they
+    differ only when a test is forging a history. `hops` gives the copy a trail
+    of that many earlier holders, which is how a copy that has changed hands
+    more times than two emulators can is reached in one step.
     Returns the bearer key that actually owns the copy."""
     priv, albpub = demo_album_key(TITLE, ARTIST, EDITION)
     album = build_album_cert(priv, albpub, TITLE, EDITION, bytes(32), ARTIST)
@@ -520,15 +528,20 @@ def stage_a_copy(taker: Presse, giver: MitmEndpoint, number: int = 1,
     bearer_priv, bearer_pub = demo_bearer_key(TITLE, ARTIST, EDITION, number)
     pressing = build_pressing_cert(priv, album_id, number, EDITION, bearer_pub)
 
+    if chain is None:
+        chain = chain_genesis(album_id, number)
     if sig is None:
-        msg = handover_message(album_id, number, giver.pub, taker.get_info()["devpub"])
+        msg = handover_message(
+            album_id, number, giver.pub, taker.get_info()["devpub"],
+            chain if signed_chain is None else signed_chain,
+        )
         sig = ecdsa_sign(giver.sk.to_string(), msg)
 
     taker.cmd(INS_TAKE_ALBUM, album + giver.mac_send(INS_GIVE_ALBUM, album))
     taker.cmd(INS_TAKE_PRESSING, pressing + giver.mac_send(INS_GIVE_PRESSING, pressing))
-    holders = b"".join(bytes([0x10 + i, 0x20 + i, 0x30 + i, 0x40 + i]) for i in range(ring_len))
-    ring = bytes([ring_len]) + holders.ljust(RING_WIRE_LEN - 1, b"\x00")
-    taker.cmd(INS_TAKE_RING, ring + giver.mac_send(INS_GIVE_RING, ring))
+    chain_wire = chain + bytes([hops])
+    assert len(chain_wire) == CHAIN_WIRE_LEN
+    taker.cmd(INS_TAKE_CHAIN, chain_wire + giver.mac_send(INS_GIVE_CHAIN, chain_wire))
     handover = (giverpub or giver.pub) + bytes([len(sig)]) + sig.ljust(SIG_MAX_LEN, bytes(1))
     taker.cmd(INS_TAKE_HANDOVER, handover + giver.mac_send(INS_GIVE_HANDOVER, handover))
     return bearer_priv
@@ -563,7 +576,9 @@ def test_a_tampered_handover_signature_is_refused(two):
     a, _ = two
     giver = pair_as_giver(a)
     album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
-    msg = handover_message(album_id, 1, giver.pub, a.get_info()["devpub"])
+    msg = handover_message(
+        album_id, 1, giver.pub, a.get_info()["devpub"], chain_genesis(album_id, 1)
+    )
     sig = bytearray(ecdsa_sign(giver.sk.to_string(), msg))
     sig[1] ^= 0xFF
 
@@ -580,7 +595,7 @@ def test_a_handover_signed_for_another_recipient_is_refused(two):
     album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
     stranger = SigningKey.from_string(bytes(range(1, 33)), curve=SECP256k1)
     elsewhere = stranger.get_verifying_key().to_string("uncompressed")
-    msg = handover_message(album_id, 1, giver.pub, elsewhere)
+    msg = handover_message(album_id, 1, giver.pub, elsewhere, chain_genesis(album_id, 1))
 
     stage_a_copy(a, giver, sig=ecdsa_sign(giver.sk.to_string(), msg))
     assert a.cmd_sw(INS_TAKE_CONFIRM) == SW_BAD_CERT
@@ -710,13 +725,16 @@ def test_the_back_of_the_record_is_four_rows_whatever_the_copy_has_been_through(
 
 
 def test_a_long_history_does_not_grow_the_page_that_carries_it(two):
-    """A copy can change hands more often than a screen has lines, and the ring
-    remembers thirty-two holders. Stated as a count, the trail is the same
-    height at the ring's limit as at one hop; listed by name it walks off the
-    bottom of the screen, which faults the draw rather than merely clipping."""
+    """A copy can change hands more often than a screen has lines. Stated as a
+    count the trail is the same height at two hundred hops as at one; listed by
+    name it walks off the bottom of the screen, which faults the draw rather
+    than merely clipping.
+
+    Two hundred is past the thirty-two the old display ring could remember: the
+    chain has no such limit, so neither has the page."""
     a, _ = two
     giver = pair_as_giver(a)
-    bearer = stage_a_copy(a, giver, ring_len=RING_MAX - 1)
+    bearer = stage_a_copy(a, giver, hops=200)
     _, sw = a.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
     assert sw == SW_OK
     a.cmd(INS_TAKE_ACCEPT, sealed_frame(giver, bearer))
@@ -728,5 +746,232 @@ def test_a_long_history_does_not_grow_the_page_that_carries_it(two):
 
     since = open_row(a, "Device ID")
     assert a.wait_for_text_since("Where it came from", since), a.dev.screen_texts()[since:]
-    assert a.wait_for_text_since(f"{RING_MAX - 1} more", since), a.dev.screen_texts()[since:]
+    assert a.wait_for_text_since("200 more", since), a.dev.screen_texts()[since:]
     assert_page_fits(a.dev, since)
+
+
+# --- the provenance chain ----------------------------------------------------
+#
+# A copy is a bearer key, so a copy that ever reaches software can be cloned, and
+# every clone answers the possession challenge. Nothing here prevents that. What
+# the chain does is make the *history* unforgeable, so that two clones which keep
+# circulating produce two histories that diverge at one link, and that link names
+# the device where the copy split.
+#
+# The head is 32 bytes and never grows, which is the only reason it fits: one
+# signature per hop would be 72, and this app has neither the flash nor the NVM
+# for thirty-two of them. The price of the digest is that a receiver cannot
+# replay a history it is handed -- it holds a commitment, not the witnesses -- so
+# what is refused on-device and what is only detectable afterwards are two
+# different lists, and both are pinned below.
+
+
+def test_a_copy_from_the_press_starts_at_the_root_its_certificate_implies(two):
+    """"Straight from the press" is a claim with a shape, not the absence of one.
+
+    The root is derived from the copy's own signed identity, so every verifier
+    computes it and no two copies share one. A device asserting a bare "no
+    history" is therefore checkable against its own certificate."""
+    a, b = two
+    cert = press_one(a, b)
+    album_id, number, _, _, _, _ = parse_pressing_cert(cert)
+
+    witness = read_witness(b)
+    assert witness["has_from"] is False
+    assert witness["hops"] == 0
+    assert witness["chain"] == chain_genesis(album_id, number)
+    assert verify_witness(witness, album_id, number, b.get_info()["devpub"])
+
+
+def test_every_hop_folds_into_the_head_and_none_of_them_is_ever_dropped(two):
+    """Two transfers, and the head replayed from the root through both links.
+
+    This is what the display ring could not do: it kept four bytes a holder and
+    dropped the oldest past thirty-two, so a much-travelled copy lost its
+    beginning. The head is the same 32 bytes at one hop and at a thousand, and
+    every hop is still inside it."""
+    a, b = two
+    cert = press_one(a, b)
+    album_id, number, _, _, _, _ = parse_pressing_cert(cert)
+    a_pub = a.get_info()["devpub"]
+    b_pub = b.get_info()["devpub"]
+
+    give_once(b, a)
+    first = read_witness(a)
+    assert first["has_from"] is True
+    assert first["hops"] == 1
+    assert first["giverpub"] == b_pub
+    assert first["chain_prev"] == chain_genesis(album_id, number)
+    assert verify_witness(first, album_id, number, a_pub)
+
+    give_once(a, b)
+    second = read_witness(b)
+    assert second["hops"] == 2
+    assert second["giverpub"] == a_pub
+    # The second link extends exactly the head the first produced: the chain is
+    # a chain, not two unrelated claims.
+    assert second["chain_prev"] == first["chain"]
+    assert verify_witness(second, album_id, number, b_pub)
+
+    replayed = chain_genesis(album_id, number)
+    replayed = chain_link(replayed, b_pub, first["sig"], a_pub)
+    replayed = chain_link(replayed, a_pub, second["sig"], b_pub)
+    assert replayed == second["chain"], "the head is not the history it claims"
+
+
+def test_a_handover_signed_over_a_different_head_is_refused(two):
+    """The head is not taken on trust: it is a field of the message the giver
+    signs. Hand over one head and sign another and the signature simply does not
+    verify, which is what stops a giver -- or a relay -- inventing a past."""
+    a, _ = two
+    giver = pair_as_giver(a)
+    album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
+
+    stage_a_copy(a, giver, chain=bytes(range(32)),
+                 signed_chain=chain_genesis(album_id, 1))
+    assert a.cmd_sw(INS_TAKE_CONFIRM) == SW_BAD_CERT
+    assert a.get_info()["has_pressing"] is False
+
+
+def test_a_link_from_an_earlier_moment_of_this_copys_history_is_refused(two):
+    """The attack the unsigned ring could not even see: a link that really was
+    signed, by the right device, for the right recipient, about the right copy --
+    and belongs to an earlier point of that copy's history.
+
+    Replaying it would rewrite the trail while every signature still verified.
+    It fails because the message names the head it extends, so a link is bound to
+    one moment and reordering or grafting a history means forging a signature."""
+    a, _ = two
+    giver = pair_as_giver(a)
+    album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
+    root = chain_genesis(album_id, 1)
+    # A head one hop further on, which is where the copy actually is.
+    later = chain_link(root, giver.pub, bytes(range(1, 71)), a.get_info()["devpub"])
+
+    stage_a_copy(a, giver, chain=later, signed_chain=root)
+    assert a.cmd_sw(INS_TAKE_CONFIRM) == SW_BAD_CERT
+    assert a.get_info()["has_pressing"] is False
+
+
+def test_a_link_lifted_from_another_copy_of_the_same_edition_is_refused(two):
+    """Roots differ per copy, and every link commits to its root through the head
+    it signs, so a genuine link out of copy #2's history cannot be used to give
+    copy #1 a past it did not have."""
+    a, _ = two
+    giver = pair_as_giver(a)
+    album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
+
+    stage_a_copy(a, giver, number=1, chain=chain_genesis(album_id, 1),
+                 signed_chain=chain_genesis(album_id, 2))
+    assert a.cmd_sw(INS_TAKE_CONFIRM) == SW_BAD_CERT
+    assert a.get_info()["has_pressing"] is False
+
+
+def one_signed_offer(giver: Presse):
+    """Pair a Python taker with a real giver and take the two frames a fork is
+    read out of: the head the giver is at, and its signature over the handover.
+
+    Nothing on the giver changes here -- phase one is free to abandon -- which is
+    exactly why a single signed link proves an offer and not a duplication."""
+    taker = pair_as_taker(giver)
+    chain_msg = giver.cmd(INS_GIVE_CHAIN)
+    head = chain_msg[:32]
+    req = taker.pub + taker.mac_send(INS_PRESS_REQUEST, taker.pub)
+    handover = giver.cmd(INS_GIVE_HANDOVER, req)
+    sig_len = handover[PUBKEY_LEN]
+    return {
+        "head": head,
+        "giverpub": handover[:PUBKEY_LEN],
+        "sig": handover[PUBKEY_LEN + 1 : PUBKEY_LEN + 1 + sig_len],
+        "takerpub": taker.pub,
+    }
+
+
+def test_two_continuations_of_one_head_fork_the_chain_and_name_the_giver(two):
+    """The evidence the whole design exists to produce.
+
+    A device that duplicated a copy has to hand each duplicate on, and each
+    handover is a link extending the head the copy was at. Two links out of one
+    head, signed by one device key, toward two different recipients, is that
+    device signing two futures for one copy. It is attributable and it does not
+    rest on trusting anybody's story: both signatures verify under the giver's
+    own key, over the same copy and the same head.
+
+    What it proves on its own is a *fork*, not a duplication: an honest giver may
+    offer a copy to several candidates before committing to one, and phase one
+    changes nothing on either device. Duplication is proven when both branches go
+    on to show possession, because a device signs a handover only for a copy it
+    holds. The signatures are the attribution; possession is the proof."""
+    a, b = two
+    cert = press_one(a, b)
+    album_id, number, _, _, _, _ = parse_pressing_cert(cert)
+    b_pub = b.get_info()["devpub"]
+
+    left = one_signed_offer(b)
+    right = one_signed_offer(b)
+
+    assert left["head"] == right["head"], "the copy did not move between the two"
+    assert left["giverpub"] == right["giverpub"] == b_pub
+    assert left["takerpub"] != right["takerpub"]
+
+    for branch in (left, right):
+        msg = handover_message(
+            album_id, number, b_pub, branch["takerpub"], branch["head"]
+        )
+        assert ecdsa_verify(b_pub, msg, branch["sig"]), "a branch does not verify"
+
+    forked = {
+        chain_link(br["head"], br["giverpub"], br["sig"], br["takerpub"])
+        for br in (left, right)
+    }
+    assert len(forked) == 2, "the two branches did not diverge"
+
+
+def test_a_truncated_history_is_taken_here_and_only_a_comparison_catches_it(two):
+    """The limit, stated rather than hidden.
+
+    A receiver holds a digest, not the witnesses behind it, so it cannot replay
+    what it is handed: one signature per hop is 72 bytes and thirty-two of them
+    fit nowhere on this device. A giver running a modified app can therefore
+    present its copy at the root and claim it never travelled, and this device
+    will take it.
+
+    What it cannot do is make that claim consistent. The link by which it
+    received the copy names it as taker at a head of its own, and the copy it
+    hands on carries a different one. The two witnesses are about the same copy
+    and cannot both be true, and the device that signed both is named in each."""
+    a, _ = two
+    giver = pair_as_giver(a)
+    album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
+    root = chain_genesis(album_id, 1)
+
+    # What really happened: this endpoint received the copy from someone else,
+    # so its true head is one link past the root.
+    upstream = SigningKey.from_string(bytes(range(3, 35)), curve=SECP256k1)
+    upstream_pub = upstream.get_verifying_key().to_string("uncompressed")
+    true_head = chain_link(
+        root,
+        upstream_pub,
+        ecdsa_sign(
+            upstream.to_string(),
+            handover_message(album_id, 1, upstream_pub, giver.pub, root),
+        ),
+        giver.pub,
+    )
+
+    # What it says: nothing ever happened.
+    bearer = stage_a_copy(a, giver, chain=root)
+    _, sw = a.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
+    assert sw == SW_OK
+    a.cmd(INS_TAKE_ACCEPT, sealed_frame(giver, bearer))
+    assert a.get_info()["has_pressing"] is True
+
+    witness = read_witness(a)
+    # Internally impeccable: the device stored a chain that checks out.
+    assert verify_witness(witness, album_id, 1, a.get_info()["devpub"])
+    assert witness["hops"] == 1
+    # And contradicted the moment the upstream link is put beside it: the giver
+    # gave from the root, having received at a head that is not the root.
+    assert witness["chain_prev"] == root
+    assert true_head != root
+    assert witness["chain_prev"] != true_head, "the truncation is undetectable"

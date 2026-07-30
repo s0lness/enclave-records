@@ -35,11 +35,11 @@ INS_CHALLENGE = 0x41
 # then the recipient's receipt releases it. See docs/protocol.md.
 INS_GIVE_ALBUM = 0x70
 INS_GIVE_PRESSING = 0x71
-INS_GIVE_RING = 0x72
+INS_GIVE_CHAIN = 0x72
 INS_GIVE_OFFER = 0x73
 INS_TAKE_ALBUM = 0x74
 INS_TAKE_PRESSING = 0x75
-INS_TAKE_RING = 0x76
+INS_TAKE_CHAIN = 0x76
 INS_TAKE_ACCEPT = 0x77
 INS_GIVE_HANDOVER = 0x78
 INS_GIVE_FINISH = 0x79
@@ -74,13 +74,19 @@ PRESSING_CERT_LEN = PRESSING_PAYLOAD_LEN + 1 + 72
 # it on the wire.
 BEARER_KEY_LEN = 32
 SIG_MAX_LEN = 72
-# The display ring on the wire: its length then the whole fixed-size array.
-RING_MAX = 32
-RING_WIRE_LEN = 1 + RING_MAX * 4
+# The provenance chain on the wire: the 32-byte head, then the hop count it
+# stands for. Constant whatever the copy's history, where the ring it replaced
+# cost 129 bytes and forgot its root past 32 hops.
+CHAIN_WIRE_LEN = 32 + 1
 # The handover frame, identical in both directions so a relay forwards it
 # whole: giver devpub || sig_len || sig.
 HANDOVER_WIRE_LEN = PUBKEY_LEN + 1 + SIG_MAX_LEN
 HANDOVER_TAG = b"presse-handover"
+CHAIN_TAG = b"presse-chain"
+LINK_TAG = b"presse-link"
+# The provenance witness read back over GET_BUNDLE p1=2: chain || chain_prev ||
+# hops || has_from || giverpub || sig_len || sig.
+WITNESS_LEN = 32 + 32 + 1 + 1 + PUBKEY_LEN + 1 + SIG_MAX_LEN
 # The receipt that releases a committed giver: album_id || number || devpub.
 RECEIPT_WIRE_LEN = 32 + 2 + PUBKEY_LEN
 
@@ -358,14 +364,15 @@ def give_stage(giver: Presse, taker: Presse, carry_art: bool = False) -> bytes:
     reorder one of them."""
     album_msg = giver.cmd(INS_GIVE_ALBUM)
     pressing_msg = giver.cmd(INS_GIVE_PRESSING)
-    ring_msg = giver.cmd(INS_GIVE_RING)
+    chain_msg = giver.cmd(INS_GIVE_CHAIN)
+    assert len(chain_msg) == CHAIN_WIRE_LEN + MAC_LEN
     req = taker.cmd(INS_PRESS_REQUEST)
     handover = giver.cmd(INS_GIVE_HANDOVER, req)
     assert len(handover) == HANDOVER_WIRE_LEN + MAC_LEN
 
     taker.cmd(INS_TAKE_ALBUM, album_msg)
     taker.cmd(INS_TAKE_PRESSING, pressing_msg)
-    taker.cmd(INS_TAKE_RING, ring_msg)
+    taker.cmd(INS_TAKE_CHAIN, chain_msg)
     taker.cmd(INS_TAKE_HANDOVER, handover)
     if carry_art:
         carry_pressing_sleeve(giver, taker)
@@ -471,15 +478,84 @@ def ecdsa_verify(pubkey_uncompressed: bytes, payload: bytes, sig_der: bytes) -> 
 
 
 def handover_message(
-    album_id: bytes, number: int, giverpub: bytes, takerpub: bytes
+    album_id: bytes, number: int, giverpub: bytes, takerpub: bytes, chain: bytes
 ) -> bytes:
     """The record a giver signs with its device key, mirroring give.rs.
 
-    Both devices are named, so the signature legitimises one handover between
-    one pair of devices and cannot be lifted onto another."""
-    assert len(album_id) == 32
+    Four bindings, one substitution stopped each: the copy (album id, number),
+    the two devices, and `chain`, the head of the provenance chain as the giver
+    received it. The last is what pins the signature to one *moment* of one
+    copy's history, so a link cannot be replayed from earlier in that history,
+    reordered, or grafted onto a truncated one."""
+    assert len(album_id) == 32 and len(chain) == 32
     assert len(giverpub) == PUBKEY_LEN and len(takerpub) == PUBKEY_LEN
-    return HANDOVER_TAG + album_id + struct.pack("<H", number) + giverpub + takerpub
+    return (
+        HANDOVER_TAG
+        + album_id
+        + struct.pack("<H", number)
+        + giverpub
+        + takerpub
+        + chain
+    )
+
+
+def chain_genesis(album_id: bytes, number: int) -> bytes:
+    """The root of a copy's chain, derived from the copy's own signed identity.
+    Nothing transmits it: every device computes the same value, and two copies
+    never share one."""
+    return hashlib.sha256(CHAIN_TAG + album_id + struct.pack("<H", number)).digest()
+
+
+def chain_link(prev: bytes, giverpub: bytes, sig: bytes, takerpub: bytes) -> bytes:
+    """Fold one hop into the chain: the head it extends, the handover frame that
+    proves it, and the device it landed on. The signature is inside the digest,
+    so a head commits to the proof of its own last hop."""
+    assert len(prev) == 32
+    return hashlib.sha256(
+        LINK_TAG
+        + prev
+        + giverpub
+        + bytes([len(sig)])
+        + sig.ljust(SIG_MAX_LEN, b"\x00")
+        + takerpub
+    ).digest()
+
+
+def read_witness(presse: "Presse") -> dict:
+    """GET_BUNDLE p1=2: everything a third party needs to check the last link
+    and to compare two copies claiming one number."""
+    body = presse.cmd(INS_GET_BUNDLE, p1=2)
+    assert len(body) == WITNESS_LEN, len(body)
+    sig_len = body[66 + PUBKEY_LEN]
+    return {
+        "chain": body[:32],
+        "chain_prev": body[32:64],
+        "hops": body[64],
+        "has_from": bool(body[65]),
+        "giverpub": body[66 : 66 + PUBKEY_LEN],
+        "sig": body[132 : 132 + sig_len],
+    }
+
+
+def verify_witness(witness: dict, album_id: bytes, number: int, takerpub: bytes) -> bool:
+    """Check a device's provenance witness end to end, with no device code: the
+    stored signature verifies over the head that precedes it, and hashing that
+    link reproduces the head the device reports holding.
+
+    A copy that never moved has no link, and its head must be the genesis its
+    own certificate implies -- so "straight from the press" is a claim with a
+    shape, not the absence of one."""
+    if not witness["has_from"]:
+        return witness["chain"] == chain_genesis(album_id, number) and witness["hops"] == 0
+    msg = handover_message(
+        album_id, number, witness["giverpub"], takerpub, witness["chain_prev"]
+    )
+    if not ecdsa_verify(witness["giverpub"], msg, witness["sig"]):
+        return False
+    expected = chain_link(
+        witness["chain_prev"], witness["giverpub"], witness["sig"], takerpub
+    )
+    return expected == witness["chain"]
 
 
 def verify_chain(album_cert: bytes, pressing_cert: bytes) -> dict:

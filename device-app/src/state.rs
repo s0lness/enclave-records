@@ -61,12 +61,25 @@ pub struct PresseNvm {
     pub pressing_from_sig_len: u8,
     pub has_from: u8,
 
-    /// Fingerprints of earlier holders, newest last, oldest dropped when full.
-    /// Travels with the copy, so it accumulates across hands instead of
-    /// restarting at each device. Deliberately unsigned and therefore
-    /// **display only**: it says where the copy has been, it does not prove it.
-    pub ring: [[u8; 4]; RING_MAX],
-    pub ring_len: u8,
+    /// The provenance chain: a 32-byte commitment to every hand this copy has
+    /// passed through, and to the order it passed through them.
+    ///
+    /// It is a rolling hash, not a list. Its root is derived from the copy's own
+    /// signed identity (album id and number), and each transfer folds the giver's
+    /// signed handover record into it, so the whole history costs 32 bytes
+    /// however far the copy has travelled and nothing is ever dropped. Every
+    /// giver signs the head it received, which is what makes a link belong to one
+    /// point of one copy's history and to no other.
+    pub chain: [u8; 32],
+    /// The head *before* the link this device received, kept so the last link's
+    /// signature is verifiable by anyone the holder shows the copy to: the
+    /// message that signature covers contains this value.
+    pub chain_prev: [u8; 32],
+    /// How many hands the copy has passed through, for display only. Saturates,
+    /// where the chain itself does not: a count that stops counting is a wrong
+    /// number on a screen, a commitment that stopped committing would be a
+    /// silent loss of evidence.
+    pub hops: u8,
 
     /// Set once this device has handed a copy on, and never cleared. Without
     /// it an empty library is ambiguous: "nothing yet" and "nothing any more"
@@ -105,10 +118,6 @@ pub struct PresseNvm {
     pub committed_to: [u8; 32],
 }
 
-/// How many earlier holders the display ring remembers. Four bytes each, so
-/// the whole history costs 128 bytes whatever the number of transfers.
-pub const RING_MAX: usize = 32;
-
 const EMPTY: PresseNvm = PresseNvm {
     initialized: 0,
     dev_priv: [0; 32],
@@ -133,8 +142,9 @@ const EMPTY: PresseNvm = PresseNvm {
     pressing_from_sig: [0; crypto::SIG_MAX_LEN],
     pressing_from_sig_len: 0,
     has_from: 0,
-    ring: [[0u8; 4]; RING_MAX],
-    ring_len: 0,
+    chain: [0; 32],
+    chain_prev: [0; 32],
+    hops: 0,
     has_given: 0,
     committed: 0,
     committed_to: [0; 32],
@@ -159,8 +169,9 @@ impl PresseNvm {
         self.pressing_from_sig = [0; SIG_MAX_LEN];
         self.pressing_from_sig_len = 0;
         self.has_from = 0;
-        self.ring = [[0u8; 4]; RING_MAX];
-        self.ring_len = 0;
+        self.chain = [0; 32];
+        self.chain_prev = [0; 32];
+        self.hops = 0;
         self.committed = 0;
         self.committed_to = [0; 32];
     }

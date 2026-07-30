@@ -242,9 +242,13 @@ pub fn handler_press_accept<'a>(
     nvm.pressing_cert = cert_buf;
     nvm.pressing_album_cert = staged_album;
     nvm.pressing_priv = bearer_priv;
-    // Straight from the press: no earlier holder to name, and no ring yet.
+    // Straight from the press: no earlier holder to name, and a chain at its
+    // root. The root is derived from the copy's own signed identity, so it needs
+    // nothing transmitted and every device agrees on it.
     nvm.has_from = 0;
-    nvm.ring_len = 0;
+    nvm.chain = crate::handlers::give::chain_genesis(&pressing.album_id, pressing.number)?;
+    nvm.chain_prev = nvm.chain;
+    nvm.hops = 0;
     Store::put(&nvm);
 
     let response = comm.begin_response();

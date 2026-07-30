@@ -161,7 +161,7 @@ sequenceDiagram
     Note over B,C: a lying relay makes the words differ, humans abort
 
     Note over B,C: PHASE 1, nothing has changed on either device yet
-    B->>R: AlbumCert, PressingCert, ring of earlier holders, 3 MACed frames
+    B->>R: AlbumCert, PressingCert, provenance chain head, 3 MACed frames
     C->>R: device pubkey C, the press's own request command reused
     R->>B: device pubkey C
     B->>R: handover record, both devices named, signed with B's device key
@@ -180,7 +180,7 @@ sequenceDiagram
     B->>R: sealed bearer key
     R->>C: sealed bearer key
     C->>C: the scalar's point is the signed holderpub, so store it
-    C->>C: keep B's signed handover, append B's fingerprint to the ring
+    C->>C: keep B's signed handover, fold it into the chain head
     C->>R: receipt, MACed under the session key
     R->>B: receipt
     B->>B: GIVE_FINISH erases key, certs and commitment in one atomic write
@@ -271,12 +271,34 @@ device has to be reconnected. So:
 On the record's `Device ID` page, beside the device that holds it now:
 
 - **the previous holder**, named by fingerprint. Exactly one hop, and it is the
-  one hop that is *proven*: the giver signs a handover record naming both
-  devices with its device key, and the taker stores it.
-- **a count of the holders before that**, not their names. Up to 32 fingerprints
-  travel with the copy, but nothing signs them, and a count cannot dress an
-  unproven trail as evidence. It is also the only version that fits a page which
-  is four rows tall and does not scroll.
+  one hop this device can prove on its own: the giver signs a handover record
+  naming both devices with its device key, and the taker stores it.
+- **a count of the holders before that**, not their names. The page is four rows
+  tall and does not scroll, and the trail is unbounded.
+
+Behind the count is the **provenance chain**: one 32-byte rolling hash, rooted in
+the copy's own signed identity, into which every transfer folds the giver's
+signed handover. The giver signs the head it received, so a link belongs to one
+moment of one copy's history and nothing else. Forging a link, editing a head in
+flight, replaying an older link or grafting one from another copy are all refused
+at the transfer, where the unsigned trail this replaces could be rewritten at
+will by whoever happened to be holding the record.
+
+It is 32 bytes at one hop and at a thousand, and a receiver checks it in constant
+time, because one signature per hop would be 2.3 KB and fits nowhere on this
+device. The price of that is honest and worth stating: a receiver holds a
+commitment, not the witnesses, so it cannot replay a history it is handed. A
+*modified* app can still claim its copy never travelled, and the lie is caught by
+comparison rather than at the door.
+
+Which is the point. A copy is a bearer key, so a copy that ever reaches software
+can be cloned, and every clone verifies as genuine; attestation would prevent
+that and is [not available](docs/threat-model.md). What the chain does is make
+the clones **name their maker**: two duplicates that keep circulating produce two
+histories that diverge at one link, signed by the device where the copy split.
+Duplication is proven when both branches show possession. Detection and
+attribution, not prevention, and the whole reasoning is in
+[docs/threat-model.md](docs/threat-model.md).
 
 ## Threat model
 
@@ -391,7 +413,7 @@ not optional on any platform. Then:
 
 ```
 scripts/build.sh        # cargo ledger build flex, this checkout
-scripts/test.sh         # 61 tests, one or two emulated Flex
+scripts/test.sh         # 68 tests, one or two emulated Flex
 scripts/rehearse-emu.sh --auto    # cut, pair, press, verify on two emulators
 scripts/emu-up.sh       # two persistent emulators (:5001, :5002)
 scripts/cockpit.sh      # both screens + the APDU wire on :5050
@@ -435,7 +457,7 @@ Everything above except *Designed but not built* and the non-goals listed in
 cut, pair, press, offline verify, give (three-state commitment, cancel, resume),
 sleeve art sealed into the album certificate, the library, the record card and
 the four sub-pages behind it (the number, the Edition ID, the Device ID with the
-provenance on it, and Learn more). 61 tests over one or two emulated Flex, and
+provenance on it, and Learn more). 68 tests over one or two emulated Flex, and
 the ceremony filmed on two physical ones.
 
 Not shipping, by decision: remote attestation, any backup, and the witness.

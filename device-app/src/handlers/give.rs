@@ -39,11 +39,21 @@
 //!
 //! ## What is proven
 //!
-//! One step of provenance: the giver signs the handover with its *device* key,
-//! and the taker keeps that signature. The frame carrying the giver's public key
-//! is itself under the session MAC, so the fingerprint the taker later displays
-//! is the device it actually paired with, not a name the relay chose. Everything
-//! deeper is the unsigned ring: where the copy has been, never a proof of it.
+//! One step of provenance is proven *live*: the giver signs the handover with
+//! its *device* key, and the taker keeps that signature. The frame carrying the
+//! giver's public key is itself under the session MAC, so the fingerprint the
+//! taker later displays is the device it actually paired with, not a name the
+//! relay chose.
+//!
+//! Everything deeper is the **chain**, a 32-byte rolling hash. Its root is
+//! derived from the copy's own signed identity, each giver signs the head it
+//! received, and the taker folds the signed handover into a new head. That makes
+//! every link belong to one point of one copy's history: a signature cannot be
+//! lifted onto another copy, another recipient, or another moment in this copy's
+//! own past. What the chain does *not* do is let a receiver replay the history:
+//! it holds a digest, not the witnesses, and one signature per hop does not fit
+//! in this device. The history is therefore verified by audit, off the device,
+//! against links the earlier holders kept; see docs/threat-model.md.
 
 use crate::certs::{
     parse_album_cert, parse_pressing_cert, AlbumInfo, PressingInfo, ALBUM_CERT_LEN,
@@ -52,14 +62,14 @@ use crate::certs::{
 use crate::crypto::{self, PUBKEY_LEN, SIG_MAX_LEN};
 use crate::handlers::press::{fingerprint_bytes, fingerprint_str, BEARER_KEY_LEN, MAC_LEN};
 use crate::session::{Role, Session};
-use crate::state::{PresseNvm, Store, RING_MAX};
+use crate::state::{PresseNvm, Store};
 use crate::AppSW;
 use alloc::format;
 use ledger_device_sdk::io::{Command, CommandResponse};
 
 pub const INS_GIVE_ALBUM: u8 = 0x70;
 pub const INS_GIVE_PRESSING: u8 = 0x71;
-pub const INS_GIVE_RING: u8 = 0x72;
+pub const INS_GIVE_CHAIN: u8 = 0x72;
 pub const INS_GIVE_OFFER: u8 = 0x73;
 pub const INS_GIVE_HANDOVER: u8 = 0x78;
 pub const INS_TAKE_RECEIPT: u8 = 0x7C;
@@ -67,15 +77,25 @@ pub const INS_TAKE_RECEIPT: u8 = 0x7C;
 /// The handover record's domain tag, keeping this signature from being mistaken
 /// for a certificate or a possession proof under the same device key.
 const HANDOVER_TAG: &[u8] = b"presse-handover";
-/// tag(15) | album_id(32) | number(2 LE) | giver devpub(65) | taker devpub(65).
-/// Both devices are named, so a signature captured from one handover cannot be
-/// replayed to legitimise another.
-const HANDOVER_MSG_LEN: usize = 15 + 32 + 2 + PUBKEY_LEN + PUBKEY_LEN;
+/// The chain's root tag, and the tag of one link. Distinct from the handover's
+/// so a link digest can never be read as a signable record, and from each
+/// other's so a root can never be presented as a link.
+const CHAIN_TAG: &[u8] = b"presse-chain";
+const LINK_TAG: &[u8] = b"presse-link";
+/// tag(15) | album_id(32) | number(2 LE) | giver devpub(65) | taker devpub(65)
+/// | chain head before this hop(32).
+///
+/// Every field stops one substitution. The album id and number stop a signature
+/// being lifted onto a different copy; the two device keys stop it being lifted
+/// onto a different pair; the chain head stops it being lifted onto a different
+/// *moment* of this copy's own history, which is what makes truncating,
+/// reordering or grafting a history impossible to do with real signatures.
+const HANDOVER_MSG_LEN: usize = 15 + 32 + 2 + PUBKEY_LEN + PUBKEY_LEN + 32;
 
-/// The ring on the wire: its length, then the whole fixed-size array. Sent flat
-/// rather than trimmed so the frame is one size whatever the copy's history.
-/// 1 + 128 + MAC(32) = 161 bytes, well inside a frame.
-pub const RING_WIRE_LEN: usize = 1 + RING_MAX * 4;
+/// The chain on the wire: the head, then the hop count it stands for.
+/// 33 + MAC(32) = 65 bytes, where the ring it replaces cost 161 and forgot its
+/// root past 32 hops.
+pub const CHAIN_WIRE_LEN: usize = 32 + 1;
 
 /// The handover frame, identical in both directions so the relay forwards it
 /// whole: giver devpub(65) | sig_len(1) | sig(72). 138 + MAC(32) = 170 bytes.
@@ -97,14 +117,40 @@ fn handover_message(
     number: u16,
     giver: &[u8; PUBKEY_LEN],
     taker: &[u8; PUBKEY_LEN],
+    chain: &[u8; 32],
 ) -> [u8; HANDOVER_MSG_LEN] {
     let mut msg = [0u8; HANDOVER_MSG_LEN];
     msg[..15].copy_from_slice(HANDOVER_TAG);
     msg[15..47].copy_from_slice(album_id);
     msg[47..49].copy_from_slice(&number.to_le_bytes());
     msg[49..49 + PUBKEY_LEN].copy_from_slice(giver);
-    msg[49 + PUBKEY_LEN..].copy_from_slice(taker);
+    msg[49 + PUBKEY_LEN..49 + 2 * PUBKEY_LEN].copy_from_slice(taker);
+    msg[49 + 2 * PUBKEY_LEN..].copy_from_slice(chain);
     msg
+}
+
+/// The root of a copy's chain, derived from the copy's own signed identity so
+/// every device computes the same value with nothing to transmit, and so a link
+/// belonging to one copy cannot be grafted onto another: the roots differ, and
+/// every link commits to the root through the head it signs.
+pub fn chain_genesis(album_id: &[u8; 32], number: u16) -> Result<[u8; 32], AppSW> {
+    crypto::sha256(&[CHAIN_TAG, album_id, &number.to_le_bytes()])
+}
+
+/// One link folded into the chain: the head it extends, the handover frame that
+/// proves it (the giver's key and signature, exactly the bytes that crossed the
+/// wire), and the device it landed on.
+///
+/// The signature is inside the digest, so a head commits to the proof of its own
+/// last hop and not merely to its shape.
+fn chain_link(
+    prev: &[u8; 32],
+    giver: &[u8; PUBKEY_LEN],
+    sig_len: u8,
+    sig: &[u8; SIG_MAX_LEN],
+    taker: &[u8; PUBKEY_LEN],
+) -> Result<[u8; 32], AppSW> {
+    crypto::sha256(&[LINK_TAG, prev, giver, &[sig_len], sig, taker])
 }
 
 /// The copy this device holds, with its own certificates re-parsed. Reading them
@@ -161,21 +207,22 @@ pub fn handler_give_pressing<'a>(
     Ok(response)
 }
 
-/// GIVE_RING (giver, paired): ring_len(1) || ring(128) || MAC(32) = 161.
+/// GIVE_CHAIN (giver, paired): chain head(32) || hops(1) || MAC(32) = 65.
 ///
-/// The ring sent here is the holders *before* this device; the taker appends
-/// this device itself, which is the one entry it can attest to.
-pub fn handler_give_ring<'a>(
+/// The head sent here stands for the copy's history *up to and including* its
+/// arrival on this device; the taker folds this hop into it and keeps the
+/// result. It is the same value this device's giver signed, so the taker is
+/// receiving a claim it can check against the signature that arrives with it,
+/// not a number the relay chose.
+pub fn handler_give_chain<'a>(
     command: Command<'a>,
     session: &mut Session,
 ) -> Result<CommandResponse<'a>, AppSW> {
     let nvm = giver_ready(session)?;
-    let mut wire = [0u8; RING_WIRE_LEN];
-    wire[0] = nvm.ring_len.min(RING_MAX as u8);
-    for (i, entry) in nvm.ring.iter().enumerate() {
-        wire[1 + i * 4..1 + i * 4 + 4].copy_from_slice(entry);
-    }
-    let mac = session.mac_send(INS_GIVE_RING, &wire)?;
+    let mut wire = [0u8; CHAIN_WIRE_LEN];
+    wire[..32].copy_from_slice(&nvm.chain);
+    wire[32] = nvm.hops;
+    let mac = session.mac_send(INS_GIVE_CHAIN, &wire)?;
     let mut response = command.into_response();
     response.append(&wire)?;
     response.append(&mac)?;
@@ -209,7 +256,15 @@ pub fn handler_give_handover<'a>(
     takerpub.copy_from_slice(payload);
 
     let (_, pressing) = held_copy(&nvm)?;
-    let msg = handover_message(&pressing.album_id, pressing.number, &nvm.dev_pub, &takerpub);
+    // The head this device holds is what the signature commits to, so the link
+    // it produces can only ever extend this copy's history from this point.
+    let msg = handover_message(
+        &pressing.album_id,
+        pressing.number,
+        &nvm.dev_pub,
+        &takerpub,
+        &nvm.chain,
+    );
     let (sig, sig_len) = crypto::sign_payload(&nvm.dev_priv, &msg)?;
 
     session.peer_devpub = takerpub;
@@ -458,26 +513,23 @@ pub fn handler_take_pressing<'a>(
     Ok(command.into_response())
 }
 
-/// TAKE_RING (taker, paired): data = ring_len(1) || ring(128) || MAC(32) = 161.
-pub fn handler_take_ring<'a>(
+/// TAKE_CHAIN (taker, paired): data = chain head(32) || hops(1) || MAC(32) = 65.
+/// Staged only. The head is checked where the signature that covers it is also
+/// in hand, which is the confirmation and again the accept.
+pub fn handler_take_chain<'a>(
     command: Command<'a>,
     session: &mut Session,
 ) -> Result<CommandResponse<'a>, AppSW> {
     taker_ready(session)?;
     let data = command.get_data();
-    if data.len() != RING_WIRE_LEN + MAC_LEN {
+    if data.len() != CHAIN_WIRE_LEN + MAC_LEN {
         return Err(AppSW::WrongApduLength);
     }
-    let (payload, mac) = data.split_at(RING_WIRE_LEN);
-    session.mac_verify(INS_GIVE_RING, payload, mac)?;
-    if payload[0] as usize > RING_MAX {
-        return Err(AppSW::BadCert);
-    }
-    session.staged_ring_len = payload[0];
-    for (i, entry) in session.staged_ring.iter_mut().enumerate() {
-        entry.copy_from_slice(&payload[1 + i * 4..1 + i * 4 + 4]);
-    }
-    session.staged_ring_valid = true;
+    let (payload, mac) = data.split_at(CHAIN_WIRE_LEN);
+    session.mac_verify(INS_GIVE_CHAIN, payload, mac)?;
+    session.staged_chain.copy_from_slice(&payload[..32]);
+    session.staged_hops = payload[32];
+    session.staged_chain_valid = true;
     Ok(command.into_response())
 }
 
@@ -523,7 +575,7 @@ fn verify_incoming(
 ) -> Result<(AlbumInfo, PressingInfo, [u8; PUBKEY_LEN]), AppSW> {
     if !session.staged_album_valid
         || !session.staged_pressing_valid
-        || !session.staged_ring_valid
+        || !session.staged_chain_valid
         || !session.staged_handover_valid
     {
         return Err(AppSW::BadState);
@@ -546,7 +598,18 @@ fn verify_incoming(
         }
     }
     let giverpub = session.staged_giverpub;
-    let msg = handover_message(&pressing.album_id, pressing.number, &giverpub, &nvm.dev_pub);
+    // The staged head is not taken on trust: it is a field of the message the
+    // giver signed, so a head that does not match the one the giver committed to
+    // fails this verification. That is what binds the history the taker is about
+    // to store to the device handing it over, and what stops a relay -- or a
+    // giver claiming a past it never had -- from editing the head in flight.
+    let msg = handover_message(
+        &pressing.album_id,
+        pressing.number,
+        &giverpub,
+        &nvm.dev_pub,
+        &session.staged_chain,
+    );
     let sig = &session.staged_handover_sig[..session.staged_handover_sig_len as usize];
     if !crypto::verify_payload(&giverpub, &msg, sig)? {
         return Err(AppSW::BadCert);
@@ -624,7 +687,17 @@ pub fn handler_take_accept<'a>(
 
     let mut nvm = Store::get()?;
     let (_, _, giverpub) = verify_incoming(session, &nvm, Some(&bearer_priv))?;
-    let giver_fp = fingerprint_bytes(&giverpub)?;
+    // Fold this hop into the head that was staged, now that the signature over
+    // it has verified. The head grows by a hash and never by a byte, so a copy
+    // that has changed hands a thousand times carries the same 32 bytes as one
+    // that changed hands once, and neither has forgotten where it started.
+    let head = chain_link(
+        &session.staged_chain,
+        &giverpub,
+        session.staged_handover_sig_len,
+        &session.staged_handover_sig,
+        &nvm.dev_pub,
+    )?;
 
     nvm.has_pressing = 1;
     nvm.pressing_cert = session.staged_pressing;
@@ -634,10 +707,12 @@ pub fn handler_take_accept<'a>(
     nvm.pressing_from_sig = session.staged_handover_sig;
     nvm.pressing_from_sig_len = session.staged_handover_sig_len;
     nvm.has_from = 1;
-    // The giver is the newest entry: it is the one hand this device saw the copy
-    // leave. Everything before it comes from the ring it was sent.
-    nvm.ring = session.staged_ring;
-    nvm.ring_len = push_ring(&mut nvm.ring, session.staged_ring_len, giver_fp);
+    nvm.chain = head;
+    // Kept beside the head so the link that produced it stays verifiable by a
+    // third party: the message the stored signature covers contains this value,
+    // so without it the one proven hop could be shown but never checked.
+    nvm.chain_prev = session.staged_chain;
+    nvm.hops = session.staged_hops.saturating_add(1);
     Store::put(&nvm);
 
     Ok(command.into_response())
@@ -669,19 +744,4 @@ pub fn handler_take_receipt<'a>(
     response.append(&wire)?;
     response.append(&mac)?;
     Ok(response)
-}
-
-/// Append a fingerprint to the ring, dropping the oldest when it is full. The
-/// ring is a bounded display of a history that is not: a copy can change hands
-/// more often than the ring can remember, and losing the earliest hop is the
-/// deliberate cost of a fixed-size record.
-fn push_ring(ring: &mut [[u8; 4]; RING_MAX], len: u8, fp: [u8; 4]) -> u8 {
-    let len = (len as usize).min(RING_MAX);
-    if len < RING_MAX {
-        ring[len] = fp;
-        return len as u8 + 1;
-    }
-    ring.rotate_left(1);
-    ring[RING_MAX - 1] = fp;
-    RING_MAX as u8
 }
