@@ -3,8 +3,8 @@
 # GET_INFO (0x01) sur chacun. Aucune commande UI-gated, aucun master consommé.
 # Sortie: l'ordre paths[0]=A / paths[1]=B tel que relay/demo.py le verra.
 set -e
-export PATH=~/venv-ledger/bin:$PATH
-cd /mnt/c/Users/sylve/projects/presse-video
+source "$(dirname "$0")/env.sh"
+cd "$PRESSE_ROOT"
 python3 - <<'EOF'
 import hashlib
 import sys
@@ -16,7 +16,8 @@ from presse_client import Presse
 paths = enumerate_ledgers()
 print(f"{len(paths)} Flex vu(s) en HID")
 if len(paths) < 2:
-    print("!! la ceremonie exige 2 chemins HID (relancer attach-usb.ps1)")
+    print("!! la ceremonie exige 2 chemins HID"
+          " (sous Windows: relancer scripts/windows/attach-usb.ps1)")
 for i, p in enumerate(paths):
     role = "A (master)" if i == 0 else ("B (receiver)" if i == 1 else f"#{i}")
     info = Presse(HidDevice(f"Flex {role}", p)).get_info()

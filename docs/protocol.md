@@ -236,7 +236,7 @@ byte = bit / 8      mask = 0x80 >> (bit % 8)      # MSB = first pixel
 ```
 
 This convention (rotate, MSB-first) was measured against on-device renders,
-not assumed: `scripts/check-packing.py` correlates a screenshot against every
+not assumed: `scripts/dev/check-packing.py` correlates a screenshot against every
 candidate and reports 1.0 only for this one.
 
 **Polarity.** The canonical bytes are white-art-on-black: a **set bit is lit

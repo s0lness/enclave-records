@@ -1,5 +1,5 @@
 """Generate the vinyl record icons (grayscale GIFs) for the device app.
-Run in WSL: python3 scripts/make-icons.py"""
+Run from the repo root: python3 scripts/dev/make-icons.py"""
 
 import os
 

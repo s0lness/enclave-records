@@ -30,7 +30,7 @@ use alloc::vec::Vec;
 ///
 /// The stored (and hashed) bytes are exactly what `scripts/sleeve.py` emits: a
 /// set bit is lit art, per that tool's `1 = white` convention. But this 1bpp
-/// path renders a set bit as *black* (measured: `scripts/check-packing.py`,
+/// path renders a set bit as *black* (measured: `scripts/dev/check-packing.py`,
 /// correlation 1.0 with `invert`). So to put white art on a black ground, the
 /// way every validated preview looks, the device inverts the bits at render
 /// time. The canonical bytes, and therefore the certificate's sleeve hash, are

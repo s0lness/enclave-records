@@ -7,10 +7,10 @@
 # radar-fallback flash. Captures B's library the moment the pressing lands, as
 # proof. Does NOT leave state behind: the caller resets with emu-up.sh.
 set -e
-source "$(dirname "$0")/env.sh"
-cd /mnt/c/Users/sylve/projects/presse
+source "$(dirname "$0")/../env.sh"
+cd "$PRESSE_ROOT"
 RAM=docs/art/ram-cover.bin
-tap() { bash scripts/tap.sh "$1" "$2" >/dev/null; }
+tap() { bash scripts/dev/tap.sh "$1" "$2" >/dev/null; }
 
 echo "=== fresh emulators ==="
 pkill -f "speculos.*--api-port 500[12]" 2>/dev/null || true

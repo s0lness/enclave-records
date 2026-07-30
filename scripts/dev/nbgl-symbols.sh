@@ -2,7 +2,7 @@
 # What NBGL surface can an app actually link against? Two layers matter:
 # the OS-side object/screen API (stubs) and the app-side layout API. Anything
 # not listed here is declared by bindgen but will not link.
-source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/../env.sh"
 OUT=$(ls -d "$APP_DIR"/target/flex/release/build/ledger_secure_sdk_sys-*/out | head -1)
 echo "=== OS-side stubs (nbgl_stubs.o) ==="
 nm -g --defined-only "$(find "$OUT" -name '*nbgl_stubs.o' | head -1)" 2>/dev/null \

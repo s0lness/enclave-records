@@ -1,5 +1,5 @@
 #!/bin/bash
-# Répétition de la cérémonie sur DEUX Speculos avec l'ELF Lot 1 de CE worktree.
+# Répétition de la cérémonie sur DEUX Speculos avec l'ELF de CE checkout.
 # Aucun Flex physique n'est touché, aucun master réel consommé.
 # demo_emu.py démarre lui-même les deux émulateurs (ports 5001 / 5002).
 #   rehearse-emu.sh --auto   # il tape tout seul
@@ -8,11 +8,8 @@
 # chemin matériel de relay/demo.py. La répétition couvre le protocole, pas le
 # repaint de la pochette sur le receveur.
 set -e
-source ~/.cargo/env
-export PATH=~/venv-ledger/bin:$PATH
-export APP_DIR=/mnt/c/Users/sylve/projects/presse-video/device-app
-export APP_ELF=$APP_DIR/target/flex/release/presse
+source "$(dirname "$0")/env.sh"
 pkill -f "speculos.*--api-port 500[12]" 2>/dev/null || true
 sleep 1
-cd /mnt/c/Users/sylve/projects/presse-video
+cd "$PRESSE_ROOT"
 exec python3 relay/demo_emu.py "$@"

@@ -6,12 +6,12 @@
 # Runs the whole ceremony with art on both sides so the receiver's sleeve
 # reads "Verified".
 set -e
-source "$(dirname "$0")/env.sh"
-cd /mnt/c/Users/sylve/projects/presse
+source "$(dirname "$0")/../env.sh"
+cd "$PRESSE_ROOT"
 OUT=docs/screens
 RAM=docs/art/ram-cover.bin
 snap() { curl -s "http://127.0.0.1:$1/screenshot" -o "$OUT/$2.png"; }
-tap() { bash scripts/tap.sh "$1" "$2" >/dev/null; }
+tap() { bash scripts/dev/tap.sh "$1" "$2" >/dev/null; }
 upload() {
   python3 - "$1" "$2" <<'EOF'
 import sys, struct, requests

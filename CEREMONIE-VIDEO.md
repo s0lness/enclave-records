@@ -4,6 +4,12 @@ But: filmer une cérémonie complète Enclave Records entre les deux Ledger Flex
 le laptop servant de relais non fiable. Tout se pilote depuis WSL Ubuntu via
 `relay/demo.py` de **ce worktree** (`presse-video`).
 
+> Ce runbook décrit un poste **Windows + WSL**: les chemins absolus et les deux
+> `.ps1` de `scripts/windows/` ne servent qu'à faire traverser l'USB jusqu'à WSL.
+> Sur Linux ou macOS, sauter §1.2 et §1.3 (le Flex est déjà visible) et lancer
+> directement `scripts/preflight.sh`, `scripts/ceremony.sh`, `scripts/give.sh`
+> depuis la racine du dépôt. Le reste du runbook est identique.
+
 Build actuellement flashé sur les deux Flex:
 
 | | |
@@ -58,11 +64,11 @@ device. C'est le sens de l'étape des 4 mots.
    l'interface USB).
 2. `usbipd-win` installé (une fois, admin: `winget install dorssel.usbipd-win`),
    chaque device **bind** une fois (admin): `usbipd list`, repérer les busid
-   `2c97`, puis `usbipd bind --busid <ID>`. Helper: `scripts/bind-flex.ps1`.
+   `2c97`, puis `usbipd bind --busid <ID>`. Helper: `scripts/windows/bind-flex.ps1`.
 3. Attacher les deux devices à WSL (à refaire à chaque session), dans PowerShell:
 
    ```powershell
-   C:\Users\sylve\projects\presse-video\scripts\attach-usb.ps1
+   C:\Users\sylve\projects\presse-video\scripts\windows\attach-usb.ps1
    ```
 
    La sortie finale doit lister **deux** lignes `2c97` attachées.
@@ -87,9 +93,10 @@ device. C'est le sens de l'étape des 4 mots.
    déverrouillé et l'app ouverte.
 
 > `demo.py` n'utilise NI `APP_DIR` NI `APP_ELF` pour la cérémonie: il ne fait que
-> du HID. Les wrappers `scripts/ceremony.sh` et `scripts/preflight.sh` mettent
-> simplement le `python3` du venv (`~/venv-ledger/bin`) dans le PATH. Ne PAS
-> sourcer `scripts/env.sh`: il épingle `APP_DIR` sur le checkout `../presse`.
+> du HID. Les wrappers `scripts/ceremony.sh` et `scripts/preflight.sh` sourcent
+> `scripts/env.sh`, qui déduit la racine du dépôt de sa propre position et met le
+> `python3` du venv (`~/venv-ledger/bin`) dans le PATH: ils agissent donc sur le
+> checkout où ils vivent, sans chemin absolu.
 
 ---
 
@@ -201,8 +208,8 @@ wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse-video/scripts/ceremony.
 
 (`a` = `paths[0]`, `b` = `paths[1]`.) Tap « Back » sur l'écran pour sortir.
 
-> `give.sh` suit le même patron que `ceremony.sh` (PATH du venv, pas de
-> `scripts/env.sh`), et ne touche ni `APP_DIR` ni `APP_ELF`.
+> `give.sh` suit le même patron que `ceremony.sh` (`env.sh` pour le PATH du venv
+> et la racine du dépôt), et ne touche ni `APP_DIR` ni `APP_ELF`.
 
 ---
 
@@ -362,11 +369,11 @@ l'AlbumCert (223) + MAC (32) doit tenir dans un `Lc` de 255.
 - **Ledger Live doit être fermé**, sinon `enumerate_ledgers()` ne voit rien.
 - **Les APDU gated bloquent sans timeout** jusqu'au tap physique. Rien ne « rate »
   si on prend son temps: les 4 mots restent affichés tant qu'on n'a pas tapé.
-- **`scripts/env.sh` pointe par défaut sur le checkout `../presse`**, et
-  `test.sh`, `emu-up.sh`, `demo-emu.sh` le sourcent. Ce sont des défauts, plus
-  des écrasements: exporter `APP_DIR`/`APP_ELF` avant l'appel suffit à les viser
-  ici. Sans effet sur la cérémonie (qui n'utilise pas `APP_ELF`), mais ne pas
-  s'en servir pour juger ce build sans avoir vérifié `APP_ELF`.
+- **`scripts/env.sh` déduit la racine du dépôt de sa propre position.** Tous les
+  scripts qui le sourcent (`build.sh`, `load.sh`, `test.sh`, `emu-up.sh`,
+  `boottest.sh`, `cockpit.sh`…) agissent donc sur CE checkout, plus sur le
+  sibling `../presse`. `APP_DIR`, `APP_ELF` et `FLEX_SDK` restent des défauts
+  surchargeables: exporter l'un d'eux avant l'appel gagne.
 - **Verify offline**: ne garder que B attaché et couper le wifi à l'image.
 - **Ne pas toucher au checkout `C:\Users\sylve\projects\presse`** (occupé).
 - **Un pressage se cède, et une cession interrompue se reprend.** Le certificat

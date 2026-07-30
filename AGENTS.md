@@ -23,10 +23,22 @@ thesis (physical editions of digital works, no chain, no server).
 - `docs/threat-model.md` - what the two promises rest on, every way a copy can be
   lost, why there is no attestation, what is out of scope. The README carries only a
   summary and links here.
-- `CEREMONIE-VIDEO.md` - runbook for the filmed ceremony on the two real Flexes with
-  the Lot 1 build (French). Driven by `scripts/preflight.sh` (read-only pre-flight),
-  `scripts/ceremony.sh` (the live relay) and `scripts/rehearse-emu.sh` (Speculos
+- `CEREMONIE-VIDEO.md` - runbook for the filmed ceremony on the two real Flexes
+  (French), with the header table naming the build actually flashed. Driven by
+  `scripts/preflight.sh` (read-only pre-flight), `scripts/ceremony.sh` (the live
+  relay), `scripts/give.sh` (the cession) and `scripts/rehearse-emu.sh` (Speculos
   rehearsal). Any APDU-format change must be reflected there or the live cut fails.
+- `scripts/` - only what gets run: `env.sh` (sourced by the rest, derives the repo
+  root from its own path, so every script acts on the checkout it lives in),
+  `build.sh`, `load.sh`, `test.sh`, `boottest.sh`, `emu-up.sh`/`emu-down.sh`,
+  `cockpit.sh`, `rehearse-emu.sh`, `ceremony.sh`, `give.sh`, `preflight.sh`,
+  `install-ca.sh`, `list-apps.sh`, `sleeve.py`. `build-video.sh` and
+  `load-video.sh` are aliases of `build.sh`/`load.sh`, kept because the runbook
+  calls them by those names. `scripts/dev/` is development archaeology (NVM
+  ceiling and art sweeps, SDK symbol dumps, screen captures, `tap.sh`,
+  `provision.sh`); `scripts/windows/` is the two usbipd PowerShell helpers, which
+  exist only because Windows has to forward USB into WSL. No script hardcodes a
+  path any more: pass `APP_DIR`/`APP_ELF`/`FLEX_SDK` to override a default.
 
 ## Vocabulary (use this, not crypto jargon)
 
@@ -44,15 +56,19 @@ library, and every screen naming the other side of a ceremony); **Edition ID** i
 one a buyer checks against the artist's channel. Never "Collection ID": the
 value fingerprints a device's key, and the label has to say so.
 
-## Build & run (everything in WSL Ubuntu, aarch64)
+## Build & run (on this machine: WSL Ubuntu, aarch64)
 
 - Toolchain: rustup (nightly pinned by device-app/rust-toolchain.toml), cargo-ledger,
   clang, gcc-arm-none-eabi. Installed under WSL root user.
-- Build: `wsl -d Ubuntu -- bash -lc 'source ~/.cargo/env && cd /mnt/c/Users/sylve/projects/presse/device-app && CARGO_TARGET_DIR=~/target-presse cargo ledger build flex'`
-  CARGO_TARGET_DIR stays on ext4 (WSL home): building on /mnt/c is slow.
-- Speculos + pytest live in `~/venv-ledger` inside WSL.
+- Build: `wsl -d Ubuntu -- bash <repo>/scripts/build.sh` (it sources `env.sh`,
+  which derives the repo root from its own location, so it builds the checkout it
+  lives in). For a faster rebuild, export `CARGO_TARGET_DIR=~/target-presse`:
+  keeping the target dir on ext4 beats /mnt/c.
+- Speculos + pytest live in `~/venv-ledger` inside WSL; `env.sh` puts that on PATH
+  when it exists and skips it when it does not.
 - Windows-side Python/Bun are NOT used for device work (win-arm64 native-module swamp);
-  USB goes to WSL via usbipd when loading real devices.
+  USB goes to WSL via usbipd (`scripts/windows/`) when loading real devices. On
+  Linux or macOS that step does not exist and neither script is needed.
 
 ## Gotchas
 
@@ -82,10 +98,10 @@ value fingerprints a device's key, and the label has to say so.
   both, deliberately.
 - Development screen probes are off by default, behind **two** cargo features:
   `artprobe` (ART_TEST and the raw `Screen`/`nbgl_screenPush` path behind it,
-  which `scripts/art-test.sh` and `show-sleeve.sh` drive) and `uiprobe`
+  which `scripts/dev/art-test.sh` and `dev/show-sleeve.sh` drive) and `uiprobe`
   (LIBRARY_PREVIEW, CARD_PREVIEW; capture only). Two and not one because
   `--features artprobe,uiprobe` lands at `text` 77104, outside the boot window;
-  each alone boots (76080 and 75568). Build with `build-video.sh -- --features
+  each alone boots (76080 and 75568). Build with `build.sh -- --features
   artprobe`.
 - `.nvm_data` is nearly full: `data_size` is 18944 and the app stops booting
   somewhere between 18432 and 19456. Re-run the boot check after *any* NVM struct
@@ -99,8 +115,11 @@ value fingerprints a device's key, and the label has to say so.
   app**, and a diet that frees more than about 2 KB has to be paid back or it
   lands under the floor. `data_size` is not an independent knob here: it is
   derived from the same link layout (`_envram_data - _nvram_data`) and moves with
-  `text` -- 18432 at 74032, 18944 at 76080 -- so the old "the ceiling is at
-  `data_size` 18944" was this same phenomenon seen from the other side. The
+  `text` -- the ballast sweep walked it from 18432 to 18944 across the window --
+  so the old "the ceiling is at `data_size` 18944" was this same phenomenon seen
+  from the other side. Which pair goes with which depends on the NVM structs of
+  the day, so read both numbers off the build rather than inferring one from the
+  other: the current build reports `text` 74032 *with* `data_size` 18944. The
   failure is silent either way: the app installs, panics before its first APDU
   (`exiting_panic` -> `exit_app(0)`, which the Speculos log shows as
   `exit called (0)`) and answers nothing. Read `text` from the build output and
@@ -108,8 +127,8 @@ value fingerprints a device's key, and the label has to say so.
 - **Screens do not scroll, and overrunning one is silent.** Flex is 480x600 with
   the header's rule at y=96 and the footer's at y=504, so a page has 408px: four
   92px touchable bars, or a tag/value list whose last renderable line starts at
-  y=468. Past that, NBGL draws the row anyway — under the footer, showing only
-  the tops of its glyphs — and past y=600 Speculos faults the draw outright. No
+  y=468. Past that, NBGL draws the row anyway (under the footer, showing only
+  the tops of its glyphs), and past y=600 Speculos faults the draw outright. No
   error, and the text is still in `/events`, so only a coordinate assertion sees
   it (`assert_page_fits` in tests/presse_client.py). Anything whose height
   follows device state (a row per fact held, a list of every previous holder) is

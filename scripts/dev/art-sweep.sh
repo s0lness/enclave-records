@@ -3,7 +3,7 @@
 # ART_W in state.rs, rebuild, boot Speculos, and check the app answers
 # GET_INFO (a too-large region dies with "exit called" before any APDU).
 # Usage: art-sweep.sh 128 160 192 224
-source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/../env.sh"
 STATE="$APP_DIR/src/state.rs"
 cp "$STATE" /tmp/state.rs.bak
 

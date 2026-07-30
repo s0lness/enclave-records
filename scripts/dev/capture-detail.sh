@@ -2,8 +2,8 @@
 # Capture the record card's DETAIL page (page 2), reached by swiping the card.
 # Boots one fresh Flex, uploads+seals the RAM sleeve, cuts a master, opens the
 # record, then navigates to the detail page and screenshots it.
-source "$(dirname "$0")/env.sh"
-cd /mnt/c/Users/sylve/projects/presse
+source "$(dirname "$0")/../env.sh"
+cd "$PRESSE_ROOT"
 OUT="${1:-docs/screens/dev/detail-page.png}"
 RAM=docs/art/ram-cover.bin
 
@@ -26,12 +26,12 @@ EOF
 python3 relay/demo_steps.py cut "Random Access Memories" 5 >/dev/null 2>&1 &
 PID=$!
 sleep 2.5
-bash scripts/tap.sh 5001 "Cut the master" >/dev/null
+bash scripts/dev/tap.sh 5001 "Cut the master" >/dev/null
 wait $PID
 sleep 1
 
 # Open the record from the library, then swipe to the detail page.
-bash scripts/tap.sh 5001 "Random Access" >/dev/null
+bash scripts/dev/tap.sh 5001 "Random Access" >/dev/null
 sleep 1.5
 # The card shows "1 of 2"; the forward chevron is bottom-right.
 curl -s -X POST http://127.0.0.1:5001/finger -H 'Content-Type: application/json' \

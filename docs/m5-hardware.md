@@ -8,16 +8,17 @@ human at the machine; the rest is scripted.
 
 1. **[manual] Update both Flexes** via Ledger Live to the latest firmware,
    then CLOSE Ledger Live (it locks the USB interface).
-   The app is built against API_LEVEL 26 (`scripts/sdk-checkout.sh 26`); if the
-   device firmware runs another API level, re-run `sdk-checkout.sh <level>` +
+   The app is built against API_LEVEL 26 (`scripts/dev/sdk-checkout.sh 26`); if the
+   device firmware runs another API level, re-run `dev/sdk-checkout.sh <level>` +
    `build.sh`. Level mismatch = app refuses to install/run.
 2. **[manual, admin] Install usbipd-win** (UAC prompt):
    `winget install dorssel.usbipd-win`
    Then one-time per device, from an ADMIN PowerShell, with the Flex plugged:
    `usbipd list` (find the 2c97 busid), `usbipd bind --busid <ID>`.
-3. **Attach USB to WSL** (each session): `scripts/attach-usb.ps1`
+3. **Attach USB to WSL** (each session): `scripts/windows/attach-usb.ps1`
    (both Flexes plugged in and unlocked).
-4. **Sideload** (per device): `wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse/scripts/load.sh`
+4. **Sideload** (per device): `bash scripts/load.sh` from the repo root (on
+   Windows: `wsl -d Ubuntu -- bash <repo>/scripts/load.sh`)
    Approve "Allow unsafe manager" on the device. Optional, to remove that
    prompt forever: `scripts/install-ca.sh` first.
    Load device A, then swap the attach to device B (or attach both and use
@@ -25,10 +26,11 @@ human at the machine; the rest is scripted.
 
 ## The demo
 
-Both Flexes unlocked, presse app open, both attached to WSL:
+Both Flexes unlocked, presse app open, both visible to the host (on Windows:
+attached to WSL):
 
 ```
-wsl -d Ubuntu -- bash -c "source /mnt/c/Users/sylve/projects/presse/scripts/env.sh && python3 /mnt/c/Users/sylve/projects/presse/relay/demo.py"
+bash scripts/ceremony.sh
 ```
 
 Beats, in order:
@@ -50,6 +52,6 @@ Beats, in order:
   commands block until the human taps; the HID read has no timeout by design.
 - Two devices enumerating: `relay/hid_device.py enumerate_ledgers()` should
   return 2 paths. If Windows/usbipd only exposes one at a time, attach both
-  busids (attach-usb.ps1 loops over all 2c97 devices).
+  busids (scripts/windows/attach-usb.ps1 loops over all 2c97 devices).
 - BOLOS endorsement (attestation, "layer 2") is NOT in v1: the demo's trust
   statement is layers 0+1 (captive keys + fraud-evident numbering).

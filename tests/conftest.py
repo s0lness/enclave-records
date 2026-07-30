@@ -1,13 +1,17 @@
 import os
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 import requests
 
+# Default to THIS checkout's build, derived from the location of this file, so a
+# bare `pytest` in tests/ never silently exercises another worktree's binary.
+# APP_ELF (exported by scripts/test.sh through scripts/env.sh) still wins.
 APP_ELF = os.environ.get(
     "APP_ELF",
-    "/mnt/c/Users/sylve/projects/presse/device-app/target/flex/release/app-boilerplate-rust",
+    str(Path(__file__).resolve().parents[1] / "device-app/target/flex/release/presse"),
 )
 
 # API ports are overridable so a run can dodge a Speculos already bound to the

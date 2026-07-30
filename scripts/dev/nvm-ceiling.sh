@@ -2,7 +2,7 @@
 # Pin the exact app-NVRAM ceiling by growing the art region itself (live code,
 # so nothing gets garbage-collected by the linker). Argument = art bytes,
 # which must be a multiple of ART_CHUNK (64). Reports data_size + boot.
-source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/../env.sh"
 STATE="$APP_DIR/src/state.rs"
 cp "$STATE" /tmp/state.rs.ceil.bak
 restore() { cp /tmp/state.rs.ceil.bak "$STATE"; }

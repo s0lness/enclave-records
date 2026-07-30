@@ -8,18 +8,18 @@
 # screen throughout, so this run is also the proof that a ceremony still works
 # with the library yielding to APDUs.
 #
-# Run from WSL with nothing else on ports 5001/5002:
+# Run with nothing else on ports 5001/5002:
 #   bash scripts/storyboard-full.sh
 set -e
-source "$(dirname "$0")/env.sh"
-cd /mnt/c/Users/sylve/projects/presse
+source "$(dirname "$0")/../env.sh"
+cd "$PRESSE_ROOT"
 OUT=docs/screens/full-demo
 mkdir -p "$OUT"
 
 RAM=docs/art/ram-cover.bin
 
 snap() { curl -s "http://127.0.0.1:$1/screenshot" -o "$OUT/$2.png"; }
-tap() { bash scripts/tap.sh "$1" "$2" >/dev/null; }
+tap() { bash scripts/dev/tap.sh "$1" "$2" >/dev/null; }
 
 # --- fresh emulators (delete any persisted NVM first) --------------------
 pkill -f "speculos.*--api-port 500[12]" 2>/dev/null || true

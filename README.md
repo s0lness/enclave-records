@@ -7,10 +7,11 @@ numbered copy is pressed onto the receiver, and anyone verifies it offline.*
      Open this README in the github.com editor and DRAG the mp4 into this spot:
      GitHub uploads it and writes an inline player with play/pause/scrub. An mp4
      committed to the repo and referenced by path renders only as a download
-     link, which is why no link is left here. docs/demo.mp4 is the film of the
-     Lot 1 ceremony and predates the current screens (the Device ID page, the
-     four-row back of the card, provenance, Learn more), so re-record with
-     scripts/record-demo.sh rather than posting it as it stands. -->
+     link, which is why no link is left here. docs/demo.mp4 is the film of an
+     earlier ceremony and predates the current screens (the Device ID page, the
+     four-row back of the card, provenance, Learn more), so re-shoot it with
+     CEREMONIE-VIDEO.md rather than posting it as it stands. For an emulator-only
+     capture instead, scripts/dev/record-demo.sh stitches one from Speculos. -->
 
 Finite editions of digital works, enforced by silicon. An artist device "cuts
 a master" of an album (edition size and press counter captive in a secure
@@ -358,7 +359,11 @@ capability into the project that is not there.
 - `relay/` - the untrusted relay: emulator cockpit (two clickable screens +
   live APDU wire on `:5050`), ceremony driver, give driver, development
   provisioning, HID transport for real devices
-- `scripts/` - build (WSL/aarch64-friendly), emulators, sideloading, captures
+- `scripts/` - the dozen commands you actually run: build, sideload, tests,
+  emulators, ceremony, give, pre-flight. `scripts/dev/` holds the development
+  archaeology (NVM-ceiling probes, SDK spelunking, screen captures);
+  `scripts/windows/` holds the two PowerShell files, which exist only to forward
+  USB into WSL and have no Linux or macOS equivalent
 - `docs/protocol.md` - wire formats, APDU map, state machine, per-attack test
   status. The implementer's document.
 - `docs/threat-model.md` - the two promises and which one is sacrificed, what the
@@ -369,26 +374,33 @@ capability into the project that is not there.
 
 ## Run it
 
-Toolchain (Linux/WSL): rustup + `cargo-ledger` + clang + `gcc-arm-none-eabi`,
-the [ledger-secure-sdk](https://github.com/LedgerHQ/ledger-secure-sdk) checked
-out at `API_LEVEL_26` (`FLEX_SDK` env var), Speculos + pytest in a venv.
-Adapt `scripts/env.sh` to your paths, then:
+Toolchain: rustup + `cargo-ledger` + clang + `gcc-arm-none-eabi`, the
+[ledger-secure-sdk](https://github.com/LedgerHQ/ledger-secure-sdk) checked out at
+`API_LEVEL_26` (`FLEX_SDK`, default `~/ledger-secure-sdk`), and Python with
+`ledgerblue` + `speculos` + `pytest`. Python is Ledger's own toolchain, so it is
+not optional on any platform. Then:
 
 ```
-scripts/build-video.sh  # cargo ledger build flex, this worktree
-pytest -q tests/        # 61 tests, one or two emulated Flex
+scripts/build.sh        # cargo ledger build flex, this checkout
+scripts/test.sh         # 61 tests, one or two emulated Flex
 scripts/rehearse-emu.sh --auto    # cut, pair, press, verify on two emulators
 scripts/emu-up.sh       # two persistent emulators (:5001, :5002)
+scripts/cockpit.sh      # both screens + the APDU wire on :5050
 python3 relay/demo_steps.py art   # then: cut, pair, press, verify
 ```
 
-`scripts/env.sh` pins `APP_DIR` to a sibling `presse` checkout, and most scripts
-source it, so they run the sibling's build and not this one. It overrides
-whatever the caller exported, so only the four scripts that set their own paths
-target this worktree: `build-video.sh`, `load-video.sh`, `env-video.sh` and
-`rehearse-emu.sh`. To use any of the others here, edit `env.sh` first. That
-includes `emu-up.sh` above, and `cockpit.sh` (the dual-screen cockpit and APDU
-wire on `:5050`), which additionally runs the sibling checkout's `relay/`.
+`scripts/env.sh` derives the repo root from its own path, so every script acts on
+the checkout it lives in. `APP_DIR`, `APP_ELF` and `FLEX_SDK` are defaults: export
+one and it wins. It also adds `~/.cargo/env` and `~/venv-ledger/bin` when they
+exist, and skips them silently when they do not, so a machine with cargo,
+speculos and pytest already on `PATH` needs no editing at all.
+
+**On Linux or macOS, ignore `scripts/windows/` entirely.** Those two PowerShell
+files forward a USB device into WSL, a problem that exists only on Windows: a
+Ledger plugged into Linux or macOS is already visible to the host. Nothing else
+in `scripts/` is platform-specific. `scripts/dev/` is development archaeology
+(NVM-ceiling probes, SDK symbol dumps, screen captures) and can be ignored until
+you need it.
 
 `demo_steps.py` takes one ceremony beat per invocation, against the emulators
 `emu-up.sh` started: `art` uploads the sleeve (before the cut, since the cut

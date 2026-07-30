@@ -11,8 +11,8 @@ signatures, the album_id linkage, the edition match, the binding to its own
 public key) and still refuses to overwrite a pressing it already holds. Only the
 authorship of the press is fictional.
 
-    ./scripts/provision.sh --number 15 --edition 20
-    ./scripts/provision.sh --device b --title "Discovery" --number 3 --edition 12
+    ./scripts/dev/provision.sh --number 15 --edition 20
+    ./scripts/dev/provision.sh --device b --title "Discovery" --number 3 --edition 12
 
 The album key is derived from title/artist/edition, so the Edition ID on screen
 is stable across takes and across an NVM wipe: re-provisioning after a reflash

@@ -109,18 +109,18 @@ album photograph.
 > **Heads-up for `device-app/`:** `ram-cover.bin` used to be a 64x64 **4bpp**
 > file of 2048 bytes. It is now 160x160 **1bpp** of 3200 bytes. Same name,
 > different format and length; anything that still assumes 2048 bytes of
-> nibbles needs updating. `scripts/make-cover.py` is the old 4bpp generator
-> and is superseded (its packing comment is also wrong: it transposes instead
+> nibbles needs updating. `scripts/make-cover.py` was the old 4bpp generator,
+> since deleted (its packing comment was also wrong: it transposes instead
 > of rotating, and puts the first pixel of a pair in the low nibble, which is
 > why the shipped 4bpp cover renders mirrored and pair-swapped on device).
 
 ## Composing a new sleeve
 
-Everything runs through WSL, where Pillow lives:
+Run it from the repo root, with the Python that has Pillow (on Windows that
+means WSL, prefixed with `wsl -d Ubuntu --`):
 
 ```sh
-wsl -d Ubuntu -- /root/venv-ledger/bin/python \
-  /mnt/c/Users/sylve/projects/presse/scripts/sleeve.py \
+python3 scripts/sleeve.py \
   --in cover-source.jpg \
   --out docs/art/my-cover.bin \
   --preview docs/art/my-cover-preview.png

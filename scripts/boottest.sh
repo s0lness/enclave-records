@@ -1,30 +1,14 @@
 #!/bin/bash
 # Boot the app N times and report whether GET_INFO answers or the app exits.
 #
-# Which ELF gets checked is the whole point of this script, so it is not left to
-# whichever env file happens to be sourced: `env.sh` hard-codes APP_DIR to the
-# ../presse checkout, and a boot check that silently validates the *other*
-# worktree's binary is worse than no boot check at all. Resolution order:
-#
-#   1. APP_ELF (or APP_DIR) exported by the caller  -- always wins;
-#   2. env-video.sh beside this script, when present -- this worktree;
-#   3. env.sh                                        -- the original checkout.
+# Which ELF gets checked is the whole point of this script. env.sh derives it from
+# its own location, so the default is the checkout this script lives in, and a
+# caller that exports APP_ELF (or APP_DIR) still wins. A boot check that silently
+# validates another worktree's binary is worse than no boot check at all.
 #
 # PORT overrides the Speculos API port (default 5001) so a boot check can run
 # beside a live emulator pair.
-CALLER_APP_ELF="$APP_ELF"
-CALLER_APP_DIR="$APP_DIR"
-HERE="$(dirname "$0")"
-if [ -f "$HERE/env-video.sh" ]; then
-  source "$HERE/env-video.sh"
-else
-  source "$HERE/env.sh"
-fi
-if [ -n "$CALLER_APP_DIR" ]; then
-  export APP_DIR="$CALLER_APP_DIR"
-  export APP_ELF="$APP_DIR/target/flex/release/presse"
-fi
-[ -n "$CALLER_APP_ELF" ] && export APP_ELF="$CALLER_APP_ELF"
+source "$(dirname "$0")/env.sh"
 
 PORT="${PORT:-5001}"
 if [ ! -f "$APP_ELF" ]; then

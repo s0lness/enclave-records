@@ -6,7 +6,7 @@ Each beat is composited as [Flex A screen] | [plain-language caption] |
 is held for a comfortable, readable wall-clock duration (see BEATS); the
 relay-wire dots march each frame so nothing looks frozen. The GIF autoplays
 inline on GitHub; the mp4 (same frames, same pacing) is pausable/scrubbable.
-Run by scripts/record-demo.sh after a capture; reads
+Run by scripts/dev/record-demo.sh after a capture; reads
 docs/screens/frames/raw/*.png."""
 
 import os

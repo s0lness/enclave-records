@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the presse device app for Flex (inside WSL).
+# Build this checkout's device app for Flex (Linux, macOS or WSL).
 set -e
 source "$(dirname "$0")/env.sh"
 cd "$APP_DIR"

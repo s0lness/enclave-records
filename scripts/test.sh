@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the pytest suite (inside WSL).
+# Run the pytest suite of this checkout, over one or two Speculos instances.
 source "$(dirname "$0")/env.sh"
-cd /mnt/c/Users/sylve/projects/presse/tests
+cd "$PRESSE_ROOT/tests"
 exec pytest -x -q "$@"

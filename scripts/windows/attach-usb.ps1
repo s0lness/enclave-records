@@ -1,3 +1,7 @@
+# WINDOWS ONLY. Forwards USB into WSL, which is a problem that exists only on
+# Windows: on Linux or macOS a Ledger is just a USB device and nothing here is
+# needed. Skip this whole directory.
+#
 # Attach the connected Ledger Flex devices to WSL (run from Windows PowerShell).
 # Prereq (one-time, admin): winget install dorssel.usbipd-win
 # First time per device (admin): usbipd bind --busid <ID>

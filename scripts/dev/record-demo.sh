@@ -8,17 +8,17 @@
 # two screens + a plain-language caption into docs/demo.gif.
 #
 # The press carries the sleeve A->B, so B renders the real cover (no radar
-# fallback). Run from WSL with nothing on ports 5001/5002:
-#   bash scripts/record-demo.sh
+# fallback). Run with nothing on ports 5001/5002:
+#   bash scripts/dev/record-demo.sh
 set -e
-source "$(dirname "$0")/env.sh"
-cd /mnt/c/Users/sylve/projects/presse
+source "$(dirname "$0")/../env.sh"
+cd "$PRESSE_ROOT"
 OUT=docs/screens/frames/raw
 mkdir -p "$OUT"
 RAM=docs/art/ram-cover.bin
 
 snap() { curl -s "http://127.0.0.1:$1/screenshot" -o "$OUT/$2.png"; }
-tap()  { bash scripts/tap.sh "$1" "$2" >/dev/null; }
+tap()  { bash scripts/dev/tap.sh "$1" "$2" >/dev/null; }
 upload() {
   python3 - "$1" "$RAM" <<'EOF'
 import sys, struct, requests

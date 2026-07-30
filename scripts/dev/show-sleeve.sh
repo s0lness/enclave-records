@@ -7,7 +7,7 @@
 # feature, so APP_ELF must point at such a build:
 #   scripts/build-video.sh -- --features artprobe
 # Without it the device answers 6D00 and the screenshot is of the library.
-source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/../env.sh"
 SRC="$1"
 OUT="$2"
 pkill -f "speculos.*5001" 2>/dev/null; sleep 1
