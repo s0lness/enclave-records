@@ -111,7 +111,7 @@ element, that software can clone it, and every clone signs the possession
 challenge and verifies as genuine. The edition stays capped -- the album key
 never leaves the master, so no new numbers -- but one of the N copies can exist
 several times. Attestation would prevent it and is
-[not available](threat-model.md#why-there-is-no-attestation-and-what-it-costs).
+[not available](threat-model.md#why-there-is-no-attestation-and-what-that-costs).
 The chain is the mitigation that is available: not prevention, but **detection
 and attribution**.
 

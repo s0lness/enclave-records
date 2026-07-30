@@ -298,7 +298,13 @@ the clones **name their maker**: two duplicates that keep circulating produce tw
 histories that diverge at one link, signed by the device where the copy split.
 Duplication is proven when both branches show possession. Detection and
 attribution, not prevention, and the whole reasoning is in
-[docs/threat-model.md](docs/threat-model.md).
+[docs/threat-model.md](docs/threat-model.md#what-the-provenance-chain-adds-and-what-it-does-not).
+
+One chain shown on its own settles nothing in either direction: a clone's head is
+equally valid, equally signed, and grows from the same public root. The chain is
+comparative evidence, and [the three things a holder does with
+one](docs/threat-model.md#what-a-holder-does-with-a-chain) all happen off the
+device.
 
 ## Threat model
 
@@ -362,7 +368,7 @@ state sits waiting to be put back.
 
 ## Designed but not built
 
-Neither of these exists in the code. They are recorded here so nobody reads a
+None of these exists in the code. They are recorded here so nobody reads a
 capability into the project that is not there.
 
 - **The witness.** A third chip that lends its memory to a transfer, so a copy
@@ -379,6 +385,20 @@ capability into the project that is not there.
   That makes the artist the natural witness for their own edition. Note that
   even this needs a command that does not exist yet: today `CHALLENGE` proves
   possession of a bearer key only, never of an album key.
+- **A board of witnesses.** A public place where anyone posts the 204-byte
+  witness read off a copy, so a duplicate surfaces the day two histories of one
+  number are up there. A public chain in the NFT sense is *constitutive*: the
+  token is the ledger entry, and with the ledger gone there is no object. A board
+  of observed witnesses is *evidentiary*: the copy verifies and transfers without
+  it, and losing it costs only the chance of noticing a clone earlier. That is
+  what makes it compatible with a design whose first principle is no chain and no
+  server. Post the witness rather than a bare head, so a reader checks the last
+  hop instead of trusting the board: a false entry is noise that nothing signs,
+  and several boards may coexist and disagree without harm. Likely form: a public
+  append-only repository anyone adds to, append-only by nature, timestamped by
+  its commits, no server, forkable by whoever distrusts it. The level past that
+  is the one not to build, a registry a copy has to check in with, which puts
+  back exactly the dependency this design refuses.
 
 ## Layout
 
@@ -460,4 +480,5 @@ the four sub-pages behind it (the number, the Edition ID, the Device ID with the
 provenance on it, and Learn more). 68 tests over one or two emulated Flex, and
 the ceremony filmed on two physical ones.
 
-Not shipping, by decision: remote attestation, any backup, and the witness.
+Not shipping, by decision: remote attestation, any backup, the witness, and the
+board of witnesses.

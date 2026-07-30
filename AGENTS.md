@@ -89,7 +89,11 @@ value fingerprints a device's key, and the label has to say so.
   because a receiver holds a digest and not the witnesses (one signature per hop
   is 72 bytes and does not fit). Never present the chain as making duplication
   impossible: it makes a circulating duplicate fork, and the fork names the
-  device that split it. See docs/protocol.md, "The provenance chain".
+  device that split it. Nor as an attestation: one chain on its own proves
+  nothing, a clone's head being equally valid and grown from the same public
+  root. It is comparative evidence, and the comparison is a verifier's job, off
+  the device. See docs/protocol.md, "The provenance chain", and
+  docs/threat-model.md, "A lone chain proves nothing".
 - A copy is bound to a **bearer key**, not to a device, and a give is a **two-phase
   commit**: `GIVE_OFFER` atomically commits the copy to one named recipient (still
   in flash, but silent and un-offerable elsewhere), and only that recipient's

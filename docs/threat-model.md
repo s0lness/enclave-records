@@ -104,6 +104,68 @@ deliberately names no device (`docs/protocol.md`, Press semantics), and it would
 make every copy reveal its first owner to anyone who reads `GET_BUNDLE`. Not
 taken here.
 
+## A lone chain proves nothing
+
+The chain is comparative evidence, and reading it as an attestation is the
+mistake it invites. Handed one copy with a head and a hop count, you cannot tell
+whether a clone of it is circulating: the clone's head is equally valid and
+equally signed, and it descends from the same root, which is public anyway, since
+the genesis is `SHA256("presse-chain" || album_id || number)` over two fields the
+certificates already carry. A single chain is unfalsifiable in both directions.
+
+What its holder knows on their own, with nothing to compare against:
+
+- **the copy is a genuine member of the edition**: AlbumCert, PressingCert, and a
+  live CHALLENGE answered by the bearer key the certificate names;
+- **the last hop really happened**, where there has been one: the giver's
+  signature over both device keys and over the head it received, checked at TAKE
+  and stored beside the copy.
+
+Both hold in isolation. Everything behind that last hop is a commitment whose
+witnesses sit on other devices.
+
+What the chain adds is time. It turns a duplication that was permanent and
+undetectable into one that surfaces the day a second chain appears, which changes
+the cloner's incentives without giving the buyer certainty today. You never judge
+a painting's provenance from the painting.
+
+## What a holder does with a chain
+
+Three operations, each with a place it belongs.
+
+**Compare two copies claiming the same number.** Two heads, one comparison.
+Identical heads with both devices answering CHALLENGE is duplication proven: one
+history, two holders. Divergent heads say the lineages split, and the hop where
+they split is found by walking the witnesses back from each side (`GET_BUNDLE
+p1=2` on every device that held the copy). Where the two witnesses already share
+`chain_prev`, the split is the last hop and both branches carry one device's
+signature.
+
+**Record what you saw.** A buyer, a gallery or a shop keeps the 204-byte witness
+it read at the moment of a transaction. The registry is the sum of those records,
+distributed across the people who made them; the public form it could take is
+[designed and not built](../README.md#designed-but-not-built).
+
+**Prove your own lineage when selling.** The head, the hop count, and the signed
+link behind the last hop, which is the one hop a device proves alone. The count
+is display only and no signature covers it: it arrives under the session MAC at
+TAKE and the taker increments it, so it is each giver's claim in turn.
+
+**Where this belongs.** The device holds and proves; comparing is a verifier's
+job. `GET_BUNDLE p1=2` answers any host with no confirmation screen, which is
+what makes all three possible off-device. Chain forensics on a 480x600 screen
+that does not scroll would be the wrong thing to build.
+
+**Open: how much of the head to show.** No screen displays the head today; the
+Device ID page carries the previous holder's fingerprint and a count. A human
+comparison needs the head rendered, and its length is an adversarial choice.
+Eight hex characters is 32 bits, and a forger invents every key in its clone's
+fabricated history, so it can grind links offline until the clone's head agrees
+with the original's over those 32 bits, at which point the two read alike to a
+human. Sixteen characters, or eight words from the 256-word SAS list, is what
+survives someone with an incentive to lie, at the price of a string nobody
+compares willingly. Not decided.
+
 ## Why there is no attestation, and what that costs
 
 The gap: nothing proves to a peer that the device across the cable is a genuine
