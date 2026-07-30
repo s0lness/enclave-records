@@ -71,20 +71,16 @@ This file is about what the object is and what it is worth.
 
 ## How it works
 
-The whole life of one copy: A cuts an edition of 5, presses **#1** onto B, and B
-hands that copy on to C. One diagram and not two, because a press and a give are
-the same shape (pair, move a bearer key under the paired channel, prove
-possession on the far side), and that is the fact worth seeing.
+The life of one copy, in the two ceremonies it takes: A cuts an edition of 5 and
+presses **#1** onto B, then B hands that copy on to C.
 
 ```mermaid
 sequenceDiagram
     actor AH as Artist
     participant A as Flex A (master)
     participant R as Laptop (untrusted relay)
-    participant B as Flex B (receiver, then giver)
+    participant B as Flex B (receiver)
     actor BH as Collector B
-    participant C as Flex C (taker)
-    actor CH as Collector C
 
     Note over AH,A: CUT
     AH->>A: upload the sleeve, then cut an edition of 5
@@ -92,11 +88,11 @@ sequenceDiagram
     Note over A: the counter starts at 5, inside the secure element
 
     Note over A,B: PAIR, commit-then-reveal ECDH through the relay
-    A->>R: commitment to A's ephemeral key
+    A->>R: commitment to its ephemeral key
     R->>B: commitment
-    B->>R: ephemeral key B
-    R->>A: ephemeral key B
-    A->>R: reveal A's ephemeral key
+    B->>R: its ephemeral key
+    R->>A: the peer's ephemeral key
+    A->>R: reveal its ephemeral key
     R->>B: reveal, checked against the commitment or hard abort
     Note over A,B: both screens show the SAME 4 words
     AH-->>BH: compare the words out loud
@@ -122,20 +118,35 @@ sequenceDiagram
     BH->>B: challenge, a random nonce
     B->>BH: signature by the bearer key, plus the cert chain
     Note over BH: GENUINE, pressing 1 of 5, held by this device
+```
 
-    Note over B,C: GIVE, the same ceremony carrying a key instead of minting one
-    B->>R: commitment to B's ephemeral key
+A give is a press with a different signer: the giver takes the master's position
+on the paired channel, asks the taker for its device key with the press's own
+request command, and seals the bearer key with the same session pad, which is why
+the pairing below is the block above, unchanged.
+
+```mermaid
+sequenceDiagram
+    actor BH as Collector B
+    participant B as Flex B (giver)
+    participant R as Laptop (untrusted relay)
+    participant C as Flex C (taker)
+    actor CH as Collector C
+
+    Note over B,C: PAIR, commit-then-reveal ECDH through the relay
+    B->>R: commitment to its ephemeral key
     R->>C: commitment
-    C->>R: ephemeral key C
-    R->>B: ephemeral key C
-    B->>R: reveal B's ephemeral key
+    C->>R: its ephemeral key
+    R->>B: the peer's ephemeral key
+    B->>R: reveal its ephemeral key
     R->>C: reveal, checked against the commitment or hard abort
-    Note over B,C: the SAME 4 words again, this time on B and C
+    Note over B,C: both screens show the SAME 4 words
     BH-->>CH: compare the words out loud
     BH->>B: tap Words match
     CH->>C: tap Words match
+    Note over B,C: a lying relay makes the words differ, humans abort
 
-    Note over B,C: phase 1, nothing has changed on either device yet
+    Note over B,C: PHASE 1, nothing has changed on either device yet
     B->>R: AlbumCert, PressingCert, ring of earlier holders, 3 MACed frames
     C->>R: device pubkey C, the press's own request command reused
     R->>B: device pubkey C
@@ -143,17 +154,15 @@ sequenceDiagram
     R->>C: all of it
     C->>C: chain and handover signature verify, and C holds no copy yet
     CH->>C: tap Receive it, 1 of 5, from device 3FC2A9B1
-    Note over B,C: the taker is asked FIRST, so a refusal costs the giver nothing
 
-    Note over B: phase 2, the commitment and its release
+    Note over B: PHASE 2, the commitment and its release
     R->>B: GIVE_OFFER p1=0
     BH->>B: tap Give it away, to device 9E4C71D0
     B->>B: committed = 1, promised to C, one atomic write
-    Note over B: promised: silent here, answers no challenge, offerable to nobody else
-    Note over B: the key never left, so GIVE_CANCEL still takes the promise back
+    Note over B: promised: silent here, and takeable back, the key never left
     R->>B: GIVE_OFFER p1=1
     B->>B: committed = 2, key flown, written BEFORE the key is sealed
-    Note over B: from here GIVE_CANCEL is refused, KeyFlown 0xB10A, and draws no screen
+    Note over B: from here GIVE_CANCEL is refused, KeyFlown 0xB10A, no screen
     B->>R: sealed bearer key
     R->>C: sealed bearer key
     C->>C: the scalar's point is the signed holderpub, so store it
@@ -161,9 +170,9 @@ sequenceDiagram
     C->>R: receipt, MACed under the session key
     R->>B: receipt
     B->>B: GIVE_FINISH erases key, certs and commitment in one atomic write
-    Note over B: B answers no challenge, and its library says it gave its copy away
+    Note over B: the copy is gone from B, which answers no challenge now
 
-    Note over CH,C: VERIFY again, and the copy is C's
+    Note over CH,C: VERIFY, offline, and the copy is C's
     CH->>C: challenge, a fresh nonce
     C->>CH: signature by the same bearer key, plus the same cert chain
     Note over CH: GENUINE, 1 of 5, previous holder 3FC2A9B1, proven
