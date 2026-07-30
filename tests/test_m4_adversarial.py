@@ -3,6 +3,7 @@ commitment cheating, grinding caps: every attack must die at the layer
 designed to kill it."""
 
 import pytest
+from ecdsa import SigningKey, SECP256k1
 
 from mitm import MitmEndpoint
 from presse_client import (
@@ -12,6 +13,7 @@ from presse_client import (
     run_pairing,
     confirm_sas_both,
     sas_words_on_screen,
+    BEARER_KEY_LEN,
     PRESSING_CERT_LEN,
     INS_PAIR_COMMIT,
     INS_PAIR_RESPOND,
@@ -92,11 +94,16 @@ def test_mitm_produces_different_sas_words(ceremony):
     assert receiver.cmd_sw(INS_PRESS_REQUEST) == SW_BAD_STATE
 
 
-def test_mitm_tampered_cert_dies_on_signature(ceremony):
-    """Even if both humans are fooled into confirming mismatched words, a
-    tampered pressing (rebound to another device key) still dies: the
-    certificate signature covers the receiver key and the MITM does not hold
-    the album key."""
+def test_mitm_cannot_substitute_the_bearer_key(ceremony):
+    """A copy is the scalar its certificate names, so a relay that swaps the
+    scalar hands over nothing: the receiver derives the point and finds it is
+    not the one the album key signed.
+
+    What this deliberately does NOT claim: that a MITM whose mismatched words
+    were confirmed by both humans comes away empty-handed. It holds a session
+    key on each side, so it can read the bearer key in flight and keep a copy of
+    it. The four words are the whole defence there, which is why they are the
+    step the ceremony is built around. See docs/protocol.md, threat model."""
     master, receiver = ceremony
     album_cert = master.cut(TITLE, EDITION)
     to_a, to_b = full_mitm(master, receiver)
@@ -109,33 +116,64 @@ def test_mitm_tampered_cert_dies_on_signature(ceremony):
         t.join(timeout=30)
         assert split_sw(r["data"])[1] == SW_OK
 
-    # MITM requests a pressing from the master for ITS OWN key.
+    # MITM requests a pressing from the master under its own device key.
     req_payload = to_a.pub
     req = req_payload + to_a.mac_send(INS_PRESS_REQUEST, req_payload)
-    cert_mac, sw = master.cmd_gated(INS_PRESS_OFFER, req, "Press this copy", "Press ")
+    offer, sw = master.cmd_gated(INS_PRESS_OFFER, req, "Press this copy", "Press ")
     assert sw == SW_OK
-    cert = cert_mac[:PRESSING_CERT_LEN]
-    assert to_a.mac_verify(INS_PRESS_OFFER, cert, cert_mac[PRESSING_CERT_LEN:])
+    sealed_len = PRESSING_CERT_LEN + BEARER_KEY_LEN
+    assert to_a.mac_verify(INS_PRESS_OFFER, offer[:sealed_len], offer[sealed_len:])
+    cert = offer[:PRESSING_CERT_LEN]
 
     # Relay the album to B, re-MACed with B's session key.
     album_payload = master.cmd(INS_GET_ALBUM)[: len(album_cert)]
     receiver.cmd(INS_PRESS_LOAD_ALBUM, album_payload + to_b.mac_send(INS_GET_ALBUM, album_payload))
 
-    # Forward the pressing to B, re-MACed. The cert is bound to the MITM's
-    # key, not B's: B must refuse on certificate grounds (not MAC grounds).
-    forged = cert + to_b.mac_send(INS_PRESS_OFFER, cert)
-    sw = receiver.cmd_sw(INS_PRESS_ACCEPT, forged)
-    assert sw == SW_BAD_CERT
+    # Forward the genuine certificate but seal a scalar of the MITM's own
+    # choosing. B must refuse on certificate grounds, not MAC grounds: the MAC
+    # is perfectly valid, the key simply is not the one the certificate names.
+    substitute = bytes(range(1, BEARER_KEY_LEN + 1))
+    forged = cert + to_b.bearer_xor(INS_PRESS_OFFER, to_b.send_seq, substitute)
+    forged += to_b.mac_send(INS_PRESS_OFFER, forged)
+    assert receiver.cmd_sw(INS_PRESS_ACCEPT, forged) == SW_BAD_CERT
+    assert receiver.get_info()["has_pressing"] is False
 
-    # Crude rebinding (patch the pubkey bytes inside the cert) dies the same
-    # way, because the signature covers the receiver key.
-    info_b = receiver.get_info()
+
+def test_mitm_cannot_rebind_a_pressing_to_a_key_it_controls(ceremony):
+    """Patching the holder key inside the certificate dies on the album
+    signature, which covers it. The MITM would have to hold the album key,
+    which lives only in the master's silicon."""
+    master, receiver = ceremony
+    album_cert = master.cut(TITLE, EDITION)
+    to_a, to_b = full_mitm(master, receiver)
+
+    for p in (master, receiver):
+        t, r = p.dev.apdu_async_start(apdu_hex(INS_PAIR_SAS))
+        assert p.dev.wait_for_text("Words match")
+        p.tap_text("Words match")
+        t.join(timeout=30)
+        assert split_sw(r["data"])[1] == SW_OK
+
+    req_payload = to_a.pub
+    req = req_payload + to_a.mac_send(INS_PRESS_REQUEST, req_payload)
+    offer, sw = master.cmd_gated(INS_PRESS_OFFER, req, "Press this copy", "Press ")
+    assert sw == SW_OK
+    cert = offer[:PRESSING_CERT_LEN]
+
+    album_payload = master.cmd(INS_GET_ALBUM)[: len(album_cert)]
+    receiver.cmd(INS_PRESS_LOAD_ALBUM, album_payload + to_b.mac_send(INS_GET_ALBUM, album_payload))
+
+    # Rebind the copy to a keypair the MITM owns outright, and hand over the
+    # matching scalar: internally consistent, and still unsigned.
+    attacker = SigningKey.from_string(bytes(range(1, 33)), curve=SECP256k1)
     patched = bytearray(cert)
-    patched[40 : 40 + 65] = info_b["devpub"]
-    patched = bytes(patched)
-    forged2 = patched + to_b.mac_send(INS_PRESS_OFFER, patched)
-    sw = receiver.cmd_sw(INS_PRESS_ACCEPT, forged2)
-    assert sw == SW_BAD_CERT
+    patched[40 : 40 + 65] = attacker.get_verifying_key().to_string("uncompressed")
+    patched = bytes(patched) + to_b.bearer_xor(
+        INS_PRESS_OFFER, to_b.send_seq, bytes(range(1, 33))
+    )
+    patched += to_b.mac_send(INS_PRESS_OFFER, patched)
+    assert receiver.cmd_sw(INS_PRESS_ACCEPT, patched) == SW_BAD_CERT
+    assert receiver.get_info()["has_pressing"] is False
 
 
 def test_commitment_cheating_is_caught(ceremony):

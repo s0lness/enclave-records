@@ -100,10 +100,10 @@ def main():
         pressing = holder.cmd(0x40, p1=0)
         album = holder.cmd(0x40, p1=1)
         info = holder.get_info()
-        result = verify_chain(album, pressing, info["devpub"])
+        result = verify_chain(album, pressing)
         verify_possession(holder, pressing)
         print(f"GENUINE: pressing {result['number']} of {result['edition']}"
-              f" of \"{result['title']}\", bound to this device, key possession proven live.")
+              f" of \"{result['title']}\", held by this device, key possession proven live.")
         return
 
     if len(paths) < 2:
@@ -172,7 +172,7 @@ def main():
     pressing = b.cmd(0x40, p1=0)
     album = b.cmd(0x40, p1=1)
     info_b = b.get_info()
-    result = verify_chain(album, pressing, info_b["devpub"])
+    result = verify_chain(album, pressing)
     verify_possession(b, pressing)
     print(f"GENUINE: pressing {result['number']} of {result['edition']}"
           f" of \"{result['title']}\". No server, no chain, no trust in this laptop.")

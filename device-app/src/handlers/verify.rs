@@ -23,18 +23,30 @@ pub fn handler_get_bundle(command: Command<'_>, part: u8) -> Result<CommandRespo
 }
 
 /// CHALLENGE: data = nonce(32). Returns sig_len(1) || DER signature by the
-/// device key over SHA256("presse-verify" || nonce). Proves live possession
-/// of the key a PressingCert is bound to.
+/// held copy's **bearer key** over SHA256("presse-verify" || nonce).
+///
+/// Signed with the bearer key and not the device key because that is what the
+/// certificate names: possession of the copy is possession of that scalar, and
+/// a device that has handed the copy on can no longer answer. Fail closed with
+/// no pressing held: an answer from the device key would prove only that a
+/// Ledger is on the other end, which is not what a verifier is asking.
+///
+/// A copy promised to a recipient but not yet acknowledged is equally silent.
+/// It is still in flash, but its owner has given it away and only the delivery
+/// is outstanding; answering for it would be claiming something already sold.
 pub fn handler_challenge(command: Command<'_>) -> Result<CommandResponse<'_>, AppSW> {
     let data = command.get_data();
     if data.len() != 32 {
         return Err(AppSW::WrongApduLength);
     }
     let nvm = Store::get()?;
+    if !nvm.holds_usable_pressing() {
+        return Err(AppSW::NoPressing);
+    }
     let mut msg = [0u8; 13 + 32];
     msg[..13].copy_from_slice(b"presse-verify");
     msg[13..].copy_from_slice(data);
-    let (sig, sig_len) = crypto::sign_payload(&nvm.dev_priv, &msg)?;
+    let (sig, sig_len) = crypto::sign_payload(&nvm.pressing_priv, &msg)?;
     let mut response = command.into_response();
     response.append(&[sig_len])?;
     response.append(&sig[..sig_len as usize])?;

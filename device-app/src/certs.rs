@@ -135,21 +135,26 @@ pub fn parse_album_cert(cert: &[u8]) -> Result<AlbumInfo, AppSW> {
 }
 
 /// PressingCert layout:
-/// magic(4) | album_id(32) | number(2 LE) | edition(2 LE) | recvpub(65)
+/// magic(4) | album_id(32) | number(2 LE) | edition(2 LE) | holderpub(65)
 /// | sig_len(1) | sig(72, zero-padded). album_id = SHA256(albpub).
+///
+/// `holderpub` is the *bearer key* of the copy, generated fresh at press time
+/// and never a device identity: whoever holds the matching scalar holds the
+/// copy. That indirection is what makes a copy transferable without ever
+/// re-signing it, so the album key is needed only once, at the press.
 pub fn build_pressing_cert(
     alb_priv: &[u8; 32],
     album_id: &[u8; 32],
     number: u16,
     edition: u16,
-    recvpub: &[u8; PUBKEY_LEN],
+    holderpub: &[u8; PUBKEY_LEN],
 ) -> Result<[u8; PRESSING_CERT_LEN], AppSW> {
     let mut cert = [0u8; PRESSING_CERT_LEN];
     cert[..4].copy_from_slice(PRESSING_MAGIC);
     cert[4..36].copy_from_slice(album_id);
     cert[36..38].copy_from_slice(&number.to_le_bytes());
     cert[38..40].copy_from_slice(&edition.to_le_bytes());
-    cert[40..40 + PUBKEY_LEN].copy_from_slice(recvpub);
+    cert[40..40 + PUBKEY_LEN].copy_from_slice(holderpub);
     let (sig, sig_len) = crypto::sign_payload(alb_priv, &cert[..PRESSING_PAYLOAD_LEN])?;
     cert[PRESSING_PAYLOAD_LEN] = sig_len;
     cert[PRESSING_PAYLOAD_LEN + 1..].copy_from_slice(&sig);
@@ -160,7 +165,9 @@ pub struct PressingInfo {
     pub album_id: [u8; 32],
     pub number: u16,
     pub edition: u16,
-    pub recvpub: [u8; PUBKEY_LEN],
+    /// The bearer key the copy is bound to. A device proves it holds the copy
+    /// by signing with the matching scalar, not by being a named recipient.
+    pub holderpub: [u8; PUBKEY_LEN],
 }
 
 /// Parse a PressingCert and verify its signature under the given album key.
@@ -180,8 +187,8 @@ pub fn parse_pressing_cert(cert: &[u8], albpub: &[u8; PUBKEY_LEN]) -> Result<Pre
     album_id.copy_from_slice(&cert[4..36]);
     let number = u16::from_le_bytes([cert[36], cert[37]]);
     let edition = u16::from_le_bytes([cert[38], cert[39]]);
-    let mut recvpub = [0u8; PUBKEY_LEN];
-    recvpub.copy_from_slice(&cert[40..40 + PUBKEY_LEN]);
+    let mut holderpub = [0u8; PUBKEY_LEN];
+    holderpub.copy_from_slice(&cert[40..40 + PUBKEY_LEN]);
     if number == 0 || edition == 0 || number > edition {
         return Err(AppSW::BadCert);
     }
@@ -189,6 +196,6 @@ pub fn parse_pressing_cert(cert: &[u8], albpub: &[u8; PUBKEY_LEN]) -> Result<Pre
         album_id,
         number,
         edition,
-        recvpub,
+        holderpub,
     })
 }

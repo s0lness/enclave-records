@@ -162,6 +162,19 @@ fn label_value_row(
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 const ROW_VALUE_RIGHT_PX: u16 = 344;
 
+/// How many rows the back of the record carries. Fixed, and fixed by type: the
+/// rows are built into an array of this length, so a fifth one does not compile.
+///
+/// The list area between the header's rule (y=96) and the split footer's (y=504)
+/// is 408px on Flex and a touchable bar is 92px, so four rows fit and a fifth is
+/// drawn under the footer, showing 8px of glyph tops above the rule and nothing
+/// else. Worse, the count must not depend on what the device happens to hold: a
+/// row that appears only for a copy that changed hands clips the page on exactly
+/// the devices that travelled, which is the state nobody tests. A fact with no
+/// row of its own goes on the sub-page of the row it qualifies.
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+const BACK_ROWS: usize = 4;
+
 /// A library row's status line, indented to start under the row's title rather
 /// than at the screen's left edge. NBGL's touchable bar pushes a bar's sub-text
 /// back to the container's left margin (under the thumbnail), while the title is
@@ -213,6 +226,16 @@ struct CardData {
     sleeve_verified: bool,
     /// Which art slot holds this record's sleeve: the master's or the pressing's.
     slot: usize,
+    /// The fingerprint of the device this copy was handed over by, when there
+    /// is one. Empty for a copy that came straight from a press, and for a
+    /// master: only a transfer has a previous holder to name.
+    received_from: String,
+    /// How many holders came before that one. A count and not their
+    /// fingerprints: nothing signs them, so the names add no proof, and a list
+    /// that grows with every hop is a screen that eventually runs off its
+    /// bottom edge. The count states the same fact in a fixed number of
+    /// characters.
+    earlier: u8,
 }
 
 #[cfg(any(target_os = "stax", target_os = "flex"))]
@@ -235,11 +258,21 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 album_id: id,
                 sleeve_verified: sleeve_verified(&sleeve_hash, crate::state::SLOT_MASTER),
                 slot: crate::state::SLOT_MASTER,
+                received_from: String::new(),
+                earlier: 0,
             }))
         }
         RecordKind::Pressing if nvm.has_pressing == 1 => {
             let album = parse_album_cert(&nvm.pressing_album_cert)?;
             let pressing = crate::certs::parse_pressing_cert(&nvm.pressing_cert, &album.albpub)?;
+            let received_from = if nvm.has_from == 1 {
+                collection_id(&nvm.pressing_from)?
+            } else {
+                String::new()
+            };
+            // The newest ring entry is the device the provenance names; only
+            // what lies behind it is "earlier".
+            let earlier = nvm.ring_len.min(crate::state::RING_MAX as u8).saturating_sub(1);
             Ok(Some(CardData {
                 title: String::from(title_str(&album.title, album.title_len)?),
                 artist: String::from(title_str(&album.artist, album.artist_len)?),
@@ -250,6 +283,8 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 album_id: pressing.album_id,
                 sleeve_verified: sleeve_verified(&album.sleeve_hash, crate::state::SLOT_PRESSING),
                 slot: crate::state::SLOT_PRESSING,
+                received_from,
+                earlier,
             }))
         }
         _ => Ok(None),
@@ -268,7 +303,8 @@ enum Page {
     InfoNumber,
     /// The Edition ID, explained: what it is and how to confirm it.
     InfoEdition,
-    /// The Collection ID, explained: the device that holds the record.
+    /// The Collection ID, explained: the device that holds the record, and
+    /// where it came from before that.
     InfoCollection,
     /// The limits of the model: what the device can and cannot prove.
     LearnMore,
@@ -349,33 +385,21 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             // a chevron that is the tap affordance into the fact's sub-page. The
             // repeated left (i) is gone: the chevron carries the affordance.
             layout.header(cstr(String::from("Enclave Records")), core::ptr::null());
-            // Single-line rows only: a touchable bar tall enough to stack a value
-            // under its label overruns the screen once four rows sit above the
-            // header and split footer, so each row stays one line. The value is
-            // right-aligned into a column (see `label_value_row`); "Learn more"
-            // is an action row and carries no value.
+            // Single-line rows only, and exactly [`BACK_ROWS`] of them: a bar
+            // tall enough to stack a value under its label costs the page a row
+            // it does not have. The value is right-aligned into a column (see
+            // `label_value_row`); "Learn more" is an action row and has none.
             let vfont = ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px;
-            layout.nav_row(
-                cstr(label_value_row("Number", &number_line, vfont, ROW_VALUE_RIGHT_PX)),
-                &chevron_details,
-                TOKEN_INFO_NUMBER,
-            );
-            layout.nav_row(
-                cstr(label_value_row("Edition ID", &card.edition_id, vfont, ROW_VALUE_RIGHT_PX)),
-                &chevron_details,
-                TOKEN_INFO_EDITION,
-            );
-            layout.nav_row(
-                cstr(label_value_row(
-                    "Collection ID",
-                    &card.collection_id,
-                    vfont,
-                    ROW_VALUE_RIGHT_PX,
-                )),
-                &chevron_details,
-                TOKEN_INFO_COLLECTION,
-            );
-            layout.nav_row(cstr(String::from("Learn more")), &chevron_details, TOKEN_LEARN_MORE);
+            let row = |label, value| label_value_row(label, value, vfont, ROW_VALUE_RIGHT_PX);
+            let rows: [(String, u8); BACK_ROWS] = [
+                (row("Number", &number_line), TOKEN_INFO_NUMBER),
+                (row("Edition ID", &card.edition_id), TOKEN_INFO_EDITION),
+                (row("Collection ID", &card.collection_id), TOKEN_INFO_COLLECTION),
+                (String::from("Learn more"), TOKEN_LEARN_MORE),
+            ];
+            for (text, token) in rows {
+                layout.nav_row(cstr(text), &chevron_details, token);
+            }
             layout.split_footer(
                 cstr(String::from("Back")),
                 TOKEN_BACK,
@@ -432,13 +456,31 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
                     "The fingerprint of this device, the collection that holds the record.",
                 )),
             ));
-            pairs.push(pair(
-                cstr(String::from("How to verify")),
-                cstr(format!(
-                    "Compare {} with the device you expect to hold it.",
-                    card.collection_id
-                )),
-            ));
+            // Where the record came from, beside who holds it now: the two
+            // halves of one question, on one page, instead of a fact stranded
+            // on an envelope that has no room for it. Always stated, so the
+            // page has one shape, and the copy that never moved says so rather
+            // than leaving the reader to guess what an absent row means.
+            //
+            // Two pairs and never more, and this one runs to four lines of
+            // value: the last line this page can render starts at y=468, and
+            // the fifth would land under the footer. A trail that grows a line
+            // per hop passes that, then passes the bottom of the screen, which
+            // faults the draw rather than merely clipping it. Hence a count of
+            // the earlier holders and not their names: unsigned either way, and
+            // the count is the same width however far the copy has travelled.
+            let mut origin = match (card.number, card.received_from.is_empty()) {
+                (None, _) => String::from("Cut on this device. A master plate is never handed on."),
+                (_, true) => String::from("Pressed onto this device from the master."),
+                _ => format!("{}, the one handover this device can prove.", card.received_from),
+            };
+            if card.earlier > 0 {
+                origin += &format!(
+                    " Before it: {} more, carried with the copy, unproven.",
+                    card.earlier
+                );
+            }
+            pairs.push(pair(cstr(String::from("Where it came from")), cstr(origin)));
             layout.tag_value_list(&pairs);
             layout.footer(cstr(String::from("Back")), TOKEN_BACK);
         }
@@ -447,7 +489,7 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             pairs.push(pair(
                 cstr(String::from("This device proves")),
                 cstr(String::from(
-                    "Genuine artwork from this edition, bound to this device.",
+                    "Genuine artwork from this edition, and that this device holds it.",
                 )),
             ));
             pairs.push(pair(
@@ -725,15 +767,50 @@ impl Library {
                 &pressing.album_id,
                 crate::state::SLOT_PRESSING,
             );
-            let status = format!("#{} of {}", pressing.number, pressing.edition);
+            // A promised copy is still on the shelf and still recoverable:
+            // only re-running the ceremony with that one recipient finishes
+            // the handover. So the row states the unfinished act and names the
+            // device to reconnect, rather than a handover that ended, which is
+            // what would stop the owner from ever trying. The recipient comes
+            // from `committed_to`, SHA256 of its devpub, the same preimage
+            // every other fingerprint on screen derives from, so naming it
+            // stores nothing and sends nothing. Promised and flown read the
+            // same here on purpose: the owner's next move is identical in both
+            // (find that device), and only the cancel path cares which it is.
+            let status = if nvm.committed != 0 {
+                let mut fp = [0u8; 4];
+                fp.copy_from_slice(&nvm.committed_to[..4]);
+                format!(
+                    "#{} of {}{}promised, reconnect {}",
+                    pressing.number,
+                    pressing.edition,
+                    ROW_SEP,
+                    fingerprint_str(&fp)
+                )
+            } else {
+                format!("#{} of {}", pressing.number, pressing.edition)
+            };
             row(&mut arena, &mut layout, &mut cstr, canonical, title, status, TOKEN_PRESSING);
             has_any = true;
         }
 
         if !has_any {
+            // An empty shelf reads two ways, and the device knows which one it
+            // is: a giver who just watched a copy leave needs that confirmed on
+            // screen, not the newcomer's invitation.
+            let (head, body) = if nvm.has_given == 1 {
+                ("No records here", "You gave your copy away.")
+            } else {
+                ("No records yet", "Cut a master or receive a pressing.")
+            };
+            // ...and it says who it is. A device holding a record shows its
+            // Collection ID on the back of the card, but an empty-handed one has
+            // no card to open, and that is exactly the device a giver has to
+            // identify: a committed row says "reconnect XXXXXXXX", and matching
+            // it against the candidate in front of you is otherwise impossible.
             layout.text(
-                cstr(String::from("No records yet")),
-                cstr(String::from("Cut a master or receive a pressing.")),
+                cstr(String::from(head)),
+                cstr(format!("{}\n\nCollection ID {}", body, collection_id(&nvm.dev_pub)?)),
             );
         }
 
@@ -767,7 +844,7 @@ impl Library {
 /// device-generated pattern packed with the agreed 1bpp convention; P1 = 1
 /// draws whatever sleeve is currently in NVM. Both put a text label *over*
 /// the image, which is the mechanism the record card needs.
-#[cfg(any(target_os = "stax", target_os = "flex"))]
+#[cfg(all(feature = "artprobe", any(target_os = "stax", target_os = "flex")))]
 pub fn handler_art_test(command: Command<'_>, stage: u8) -> Result<CommandResponse<'_>, AppSW> {
     use crate::app_ui::library::{run_event_loop, Screen, ScreenArena, SCREEN_W};
     use crate::state::{Art, ART_W};
@@ -835,7 +912,7 @@ pub fn handler_art_test(command: Command<'_>, stage: u8) -> Result<CommandRespon
 /// one through the same touchable-bar list the two-record library uses, so the
 /// list layout can be verified (and captured for the film) at three rows and up.
 /// Draws nothing that touches or changes NVM.
-#[cfg(any(target_os = "stax", target_os = "flex"))]
+#[cfg(all(feature = "uiprobe", any(target_os = "stax", target_os = "flex")))]
 pub fn handler_library_preview(command: Command<'_>, count: u8) -> Result<CommandResponse<'_>, AppSW> {
     use crate::app_ui::library::{run_event_loop, Layout, ScreenArena, TOKEN_PRESSING, TOKEN_QUIT};
 
@@ -898,7 +975,7 @@ pub fn handler_library_preview(command: Command<'_>, count: u8) -> Result<Comman
 /// synthetic cover. A pressing numbered `#1000 of 1000` is unreachable by
 /// ceremony (it would take 999 real presses), so this is how the large-number
 /// layout is verified and captured. Touches no NVM.
-#[cfg(any(target_os = "stax", target_os = "flex"))]
+#[cfg(all(feature = "uiprobe", any(target_os = "stax", target_os = "flex")))]
 pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>, AppSW> {
     let data = command.get_data();
     if data.len() != 4 {
@@ -918,6 +995,10 @@ pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>,
         album_id: [0x42u8; 32],
         sleeve_verified: false,
         slot: crate::state::SLOT_MASTER,
+        // A synthetic card is never a transfer, so its Collection ID page reads
+        // as a copy that came straight from a press.
+        received_from: String::new(),
+        earlier: 0,
     };
     card_loop(&card)?;
 

@@ -39,6 +39,7 @@ use core::ptr;
 use ledger_device_sdk::nbgl::nbgl_next_event_ahead;
 use ledger_secure_sdk_sys::*;
 
+#[cfg(feature = "artprobe")]
 pub const SCREEN_W: i16 = SCREEN_WIDTH as i16;
 #[allow(dead_code)]
 pub const SCREEN_H: i16 = SCREEN_HEIGHT as i16;
@@ -48,6 +49,9 @@ pub const SCREEN_H: i16 = SCREEN_HEIGHT as i16;
 /// draw, run the loop, and only then drop it.
 #[derive(Default)]
 pub struct ScreenArena {
+    /// Only the development probes intern strings through the arena; every
+    /// production screen owns its own `Vec<CString>` beside the layout.
+    #[cfg(feature = "artprobe")]
     strings: Vec<CString>,
     bitmaps: Vec<Box<[u8]>>,
     icons: Vec<Box<nbgl_icon_details_t>>,
@@ -59,6 +63,7 @@ impl ScreenArena {
     }
 
     /// Intern a string and hand back a pointer NBGL can keep.
+    #[cfg(feature = "artprobe")]
     pub fn text(&mut self, s: &str) -> *const core::ffi::c_char {
         // A NUL inside a label would truncate the C string; replace rather
         // than fail, since this is display-only.
@@ -82,6 +87,7 @@ impl ScreenArena {
 
     /// Intern an icon descriptor over a bitmap that already lives forever
     /// (the sleeve in NVM): no copy, NBGL reads straight out of flash.
+    #[cfg(feature = "artprobe")]
     pub fn icon_static(
         &mut self,
         bitmap: &'static [u8],
@@ -153,6 +159,7 @@ fn touch_result_set(exit: Exit) {
     TOUCH_RESULT.store(encoded, core::sync::atomic::Ordering::Relaxed);
 }
 
+#[cfg(feature = "artprobe")]
 unsafe extern "C" fn touch_callback(obj: *mut core::ffi::c_void, event: nbgl_touchType_t) {
     let result = match event {
         SWIPED_LEFT => Some(Exit::SwipedLeft),
@@ -170,6 +177,7 @@ unsafe extern "C" fn touch_callback(obj: *mut core::ffi::c_void, event: nbgl_tou
 
 /// Static empty label for the background object. A `c""` literal is fine
 /// here: it is never dereferenced for content, only for its terminating NUL.
+#[cfg(feature = "artprobe")]
 static EMPTY_LABEL: &core::ffi::CStr = c"";
 
 /// An all-zero ticker: these screens want no periodic callback.
@@ -180,6 +188,11 @@ static NO_TICKER: nbgl_screenTickerConfiguration_t = nbgl_screenTickerConfigurat
 };
 
 /// A screen of our own, on its own NBGL layer. Dropping it pops the layer.
+///
+/// The raw object/screen path is kept for the development probes only (see the
+/// module notes: it composes but never paints from an app). Production screens
+/// all go through [`Layout`], so this is compiled in under `artprobe` alone.
+#[cfg(feature = "artprobe")]
 pub struct Screen {
     children: *mut *mut nbgl_obj_t,
     capacity: u8,
@@ -187,6 +200,7 @@ pub struct Screen {
     objects: Vec<*mut nbgl_obj_t>,
 }
 
+#[cfg(feature = "artprobe")]
 impl Screen {
     /// Push a fresh layer with room for `capacity` children. `swipeable` asks
     /// the screen itself to report swipes, which is how NBGL delivers a swipe
@@ -342,6 +356,7 @@ impl Screen {
     }
 }
 
+#[cfg(feature = "artprobe")]
 impl Drop for Screen {
     fn drop(&mut self) {
         unsafe {

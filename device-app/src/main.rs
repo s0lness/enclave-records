@@ -26,6 +26,7 @@ mod handlers {
     pub mod art;
     pub mod collection;
     pub mod cut;
+    pub mod give;
     pub mod info;
     pub mod pair;
     pub mod press;
@@ -63,6 +64,10 @@ pub enum AppSW {
     CryptoFail = 0xB107,
     NoPressing = 0xB108,
     TooManyAttempts = 0xB109,
+    /// A promise can no longer be taken back: the sealed bearer key has already
+    /// left this device, so the copy may exist elsewhere and un-promising it
+    /// here would be a double-spend primitive rather than a repair.
+    KeyFlown = 0xB10A,
     WrongApduLength = StatusWords::BadLen as u16,
     Ok = 0x9000,
 }
@@ -80,12 +85,20 @@ impl From<io::CommError> for AppSW {
 }
 
 /// APDU instructions. See docs/protocol.md for the ceremony flows.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Deliberately not `Debug`: a derived one bakes all forty variant names and
+/// the formatting machinery to print them into flash, and nothing on the device
+/// ever prints an instruction. Decode errors are matched, never `unwrap_err`ed.
+#[derive(Clone, Copy, PartialEq)]
 pub enum Instruction {
     GetInfo,
     Collection,
+    /// Development screen probes, compiled in only under their own features.
+    #[cfg(feature = "artprobe")]
     ArtTest { stage: u8 },
+    #[cfg(feature = "uiprobe")]
     LibraryPreview { count: u8 },
+    #[cfg(feature = "uiprobe")]
     CardPreview,
     SetArt { slot: u8 },
     GetArt { chunk: u8, slot: u8 },
@@ -105,6 +118,27 @@ pub enum Instruction {
     ResetMaster,
     ProvisionAlbum,
     ProvisionPressing,
+    /// Handing a held copy on. The giver reads out what it holds and signs the
+    /// handover, the taker stages it and confirms first, then the giver commits
+    /// and releases the key, and the taker's receipt finally frees the giver.
+    GiveAlbum,
+    GivePressing,
+    GiveRing,
+    GiveHandover,
+    /// Phase 2 on the giver, in two halves: the commitment (`release: false`,
+    /// UI-gated, changes state and returns nothing) and the release of the
+    /// sealed bearer key (`release: true`). Splitting them is what makes
+    /// "promised but the key never left" a state a human can still take back.
+    GiveOffer { release: bool },
+    GiveCancel,
+    GiveFinish,
+    TakeAlbum,
+    TakePressing,
+    TakeRing,
+    TakeHandover,
+    TakeConfirm,
+    TakeAccept,
+    TakeReceipt,
 }
 
 impl TryFrom<ApduHeader> for Instruction {
@@ -114,9 +148,16 @@ impl TryFrom<ApduHeader> for Instruction {
         match (value.ins, value.p1, value.p2) {
             (0x01, 0, 0) => Ok(Instruction::GetInfo),
             (0x02, 0, 0) => Ok(Instruction::Collection),
+            #[cfg(feature = "artprobe")]
             (0x61, stage, 0) => Ok(Instruction::ArtTest { stage }),
+            #[cfg(feature = "artprobe")]
+            (0x61, _, _) => Err(AppSW::WrongP1P2),
+            #[cfg(feature = "uiprobe")]
             (0x63, count, 0) => Ok(Instruction::LibraryPreview { count }),
+            #[cfg(feature = "uiprobe")]
             (0x65, 0, 0) => Ok(Instruction::CardPreview),
+            #[cfg(feature = "uiprobe")]
+            (0x63 | 0x65, _, _) => Err(AppSW::WrongP1P2),
             (0x62, slot @ (0 | 1), 0) => Ok(Instruction::SetArt { slot }),
             (0x64, chunk, slot @ (0 | 1)) => Ok(Instruction::GetArt { chunk, slot }),
             (0x10, 0, 0) => Ok(Instruction::Cut),
@@ -135,7 +176,22 @@ impl TryFrom<ApduHeader> for Instruction {
             (0x50, 0, 0) => Ok(Instruction::ResetMaster),
             (0x66, 0, 0) => Ok(Instruction::ProvisionAlbum),
             (0x67, 0, 0) => Ok(Instruction::ProvisionPressing),
-            (0x01 | 0x02 | 0x10 | 0x21..=0x25 | 0x30..=0x34 | 0x40 | 0x41 | 0x50 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65 | 0x66 | 0x67, _, _) => {
+            (0x70, 0, 0) => Ok(Instruction::GiveAlbum),
+            (0x71, 0, 0) => Ok(Instruction::GivePressing),
+            (0x72, 0, 0) => Ok(Instruction::GiveRing),
+            (0x73, 0, 0) => Ok(Instruction::GiveOffer { release: false }),
+            (0x73, 1, 0) => Ok(Instruction::GiveOffer { release: true }),
+            (0x74, 0, 0) => Ok(Instruction::TakeAlbum),
+            (0x75, 0, 0) => Ok(Instruction::TakePressing),
+            (0x76, 0, 0) => Ok(Instruction::TakeRing),
+            (0x77, 0, 0) => Ok(Instruction::TakeAccept),
+            (0x78, 0, 0) => Ok(Instruction::GiveHandover),
+            (0x79, 0, 0) => Ok(Instruction::GiveFinish),
+            (0x7A, 0, 0) => Ok(Instruction::TakeHandover),
+            (0x7B, 0, 0) => Ok(Instruction::TakeConfirm),
+            (0x7C, 0, 0) => Ok(Instruction::TakeReceipt),
+            (0x7D, 0, 0) => Ok(Instruction::GiveCancel),
+            (0x01 | 0x02 | 0x10 | 0x21..=0x25 | 0x30..=0x34 | 0x40 | 0x41 | 0x50 | 0x62 | 0x64 | 0x66 | 0x67 | 0x70..=0x7D, _, _) => {
                 Err(AppSW::WrongP1P2)
             }
             (_, _, _) => Err(AppSW::InsNotSupported),
@@ -173,15 +229,35 @@ fn warrants_library_redraw(ins: Instruction) -> bool {
             | Instruction::PressAccept
             | Instruction::ResetMaster
             | Instruction::ProvisionPressing
+            | Instruction::GiveOffer { .. }
+            | Instruction::GiveCancel
+            | Instruction::GiveFinish
+            | Instruction::TakeConfirm
+            | Instruction::TakeAccept
             // UI-only: they cover the library, so it must be repainted under
-            // them, but they change nothing (SAS confirmation, the record card,
-            // the art-test probe).
+            // them, but they change nothing (SAS confirmation, the record card).
             | Instruction::PairSas
             | Instruction::Collection
-            | Instruction::ArtTest { .. }
-            | Instruction::LibraryPreview { .. }
-            | Instruction::CardPreview
-    )
+    ) || probe_redraw(ins)
+}
+
+/// The development probes draw over the library too, so they warrant the same
+/// repaint. Split out so the production match above carries no probe seam, and
+/// so it compiles to a constant `false` in a shipped build.
+fn probe_redraw(ins: Instruction) -> bool {
+    #[cfg(feature = "artprobe")]
+    if matches!(ins, Instruction::ArtTest { .. }) {
+        return true;
+    }
+    #[cfg(feature = "uiprobe")]
+    if matches!(
+        ins,
+        Instruction::LibraryPreview { .. } | Instruction::CardPreview
+    ) {
+        return true;
+    }
+    let _ = ins;
+    false
 }
 
 /// Serve exactly one APDU: decode, dispatch, reply. A command that draws its own
@@ -197,10 +273,12 @@ fn serve_one_command(
     library: &mut Option<handlers::collection::Library>,
 ) {
     let command = comm.next_command();
-    let decoded = command.decode::<Instruction>();
-    let Ok(ins) = decoded else {
-        let _ = comm.send(&[], decoded.unwrap_err());
-        return;
+    let ins = match command.decode::<Instruction>() {
+        Ok(ins) => ins,
+        Err(reply) => {
+            let _ = comm.send(&[], reply);
+            return;
+        }
     };
     if warrants_library_redraw(ins) {
         *library = None;
@@ -274,10 +352,12 @@ fn legacy_home_main(comm: &mut io::Comm, session: &mut Session) {
     home.show_and_return();
     loop {
         let command = comm.next_command();
-        let decoded = command.decode::<Instruction>();
-        let Ok(ins) = decoded else {
-            let _ = comm.send(&[], decoded.unwrap_err());
-            continue;
+        let ins = match command.decode::<Instruction>() {
+            Ok(ins) => ins,
+            Err(reply) => {
+                let _ = comm.send(&[], reply);
+                continue;
+            }
         };
         let ui_gated = matches!(
             ins,
@@ -287,6 +367,11 @@ fn legacy_home_main(comm: &mut io::Comm, session: &mut Session) {
                 | Instruction::PressOffer
                 | Instruction::PressAccept
                 | Instruction::ResetMaster
+                | Instruction::GiveOffer { .. }
+                | Instruction::GiveCancel
+                | Instruction::GiveFinish
+                | Instruction::TakeConfirm
+                | Instruction::TakeAccept
         );
         match handle_apdu(command, ins, session) {
             Ok(reply) => {
@@ -311,10 +396,13 @@ fn handle_apdu<'a>(
     match ins {
         Instruction::GetInfo => handlers::info::handler_get_info(command),
         Instruction::Collection => handlers::collection::handler_collection(command),
+        #[cfg(feature = "artprobe")]
         Instruction::ArtTest { stage } => handlers::collection::handler_art_test(command, stage),
+        #[cfg(feature = "uiprobe")]
         Instruction::LibraryPreview { count } => {
             handlers::collection::handler_library_preview(command, count)
         }
+        #[cfg(feature = "uiprobe")]
         Instruction::CardPreview => handlers::collection::handler_card_preview(command),
         Instruction::SetArt { slot } => handlers::art::handler_set_art(command, slot),
         Instruction::GetArt { chunk, slot } => handlers::art::handler_get_art(command, chunk, slot),
@@ -336,5 +424,21 @@ fn handle_apdu<'a>(
         Instruction::PressAccept => handlers::press::handler_press_accept(command, session),
         Instruction::GetBundle { part } => handlers::verify::handler_get_bundle(command, part),
         Instruction::Challenge => handlers::verify::handler_challenge(command),
+        Instruction::GiveAlbum => handlers::give::handler_give_album(command, session),
+        Instruction::GivePressing => handlers::give::handler_give_pressing(command, session),
+        Instruction::GiveRing => handlers::give::handler_give_ring(command, session),
+        Instruction::GiveHandover => handlers::give::handler_give_handover(command, session),
+        Instruction::GiveOffer { release } => {
+            handlers::give::handler_give_offer(command, session, release)
+        }
+        Instruction::GiveCancel => handlers::give::handler_give_cancel(command),
+        Instruction::GiveFinish => handlers::give::handler_give_finish(command, session),
+        Instruction::TakeAlbum => handlers::give::handler_take_album(command, session),
+        Instruction::TakePressing => handlers::give::handler_take_pressing(command, session),
+        Instruction::TakeRing => handlers::give::handler_take_ring(command, session),
+        Instruction::TakeHandover => handlers::give::handler_take_handover(command, session),
+        Instruction::TakeConfirm => handlers::give::handler_take_confirm(command, session),
+        Instruction::TakeAccept => handlers::give::handler_take_accept(command, session),
+        Instruction::TakeReceipt => handlers::give::handler_take_receipt(command, session),
     }
 }

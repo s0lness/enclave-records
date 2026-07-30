@@ -14,6 +14,7 @@ import pytest
 from presse_client import (
     Presse,
     apdu_hex,
+    assert_page_fits,
     split_sw,
     parse_album_cert,
     verify_sleeve,
@@ -156,15 +157,18 @@ def test_edition_id_info_opens_its_page(device):
 
 def test_collection_id_info_opens_its_page(device):
     """Tapping the Collection ID (i) row opens its sub-page: the fingerprint of
-    the device that holds the record, and how to verify it."""
+    the device that holds the record, and where the record came from. A master
+    was cut here and is never handed on, so that is what its page says."""
     p = Presse(device)
     p.cut(TITLE, EDITION, ARTIST)
     assert device.wait_for_text(TITLE)
     open_card_pages(device, p)
+    since = len(device.events())
     p.tap_text("Collection ID")
-    # The sub-page opened: it carries the "How to verify" guidance row.
-    assert device.wait_for_text("How to verify"), device.screen_texts()
-    p.tap_text("Back")
+    assert p.wait_for_text_since("Where it came from", since), device.screen_texts()[since:]
+    assert p.wait_for_text_since("Cut on this device", since), device.screen_texts()[since:]
+    assert_page_fits(device, since)
+    p.tap_text("Back", since=since)
     assert device.wait_for_text("Edition ID"), device.screen_texts()
 
 

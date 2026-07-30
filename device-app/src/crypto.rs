@@ -62,6 +62,16 @@ pub fn privkey_from(bytes: &[u8; 32]) -> PrivKey {
     Secp256k1::from(bytes)
 }
 
+/// The public point of a scalar. A received bearer key is only accepted once
+/// this matches the `holderpub` its certificate was signed over, which is the
+/// check a lying relay cannot get past: it can substitute a scalar, but not one
+/// whose point the album key already signed.
+pub fn pubkey_of(sk_bytes: &[u8; 32]) -> Result<[u8; PUBKEY_LEN], AppSW> {
+    let sk = privkey_from(sk_bytes);
+    let pk = sk.public_key().map_err(|_| AppSW::CryptoFail)?;
+    Ok(pk.pubkey)
+}
+
 /// Deterministic ECDSA over SHA-256(payload). Returns (DER signature, length).
 pub fn sign_payload(sk_bytes: &[u8; 32], payload: &[u8]) -> Result<([u8; SIG_MAX_LEN], u8), AppSW> {
     let hash = sha256(&[payload])?;

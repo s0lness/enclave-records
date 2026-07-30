@@ -9,6 +9,7 @@ from ecdsa import SigningKey, VerifyingKey, SECP256k1
 COMMIT_TAG = b"presse-commit"
 SAS_TAG = b"presse-sas"
 SESSION_TAG = b"presse-session"
+BEARER_TAG = b"presse-bearer"
 
 
 class MitmEndpoint:
@@ -36,6 +37,16 @@ class MitmEndpoint:
         transcript = hashlib.sha256(SAS_TAG + master_pub + receiver_pub).digest()
         self.session_key = hmac_mod.new(secret, SESSION_TAG + transcript, hashlib.sha256).digest()
         self.sas = hmac_mod.new(secret, SAS_TAG + transcript, hashlib.sha256).digest()[:4]
+
+    def bearer_xor(self, ins: int, seq: int, key: bytes) -> bytes:
+        """Seal or open a 32-byte bearer key: XOR against a session-keyed pad.
+        A MITM that fooled both humans holds the session key on each side and
+        can therefore read the key in flight, which is precisely the property
+        the SAS step exists to prevent and these tests exist to pin."""
+        pad = hmac_mod.new(
+            self.session_key, BEARER_TAG + bytes([ins, seq]), hashlib.sha256
+        ).digest()
+        return bytes(a ^ b for a, b in zip(key, pad))
 
     def mac_send(self, ins: int, payload: bytes) -> bytes:
         mac = hmac_mod.new(

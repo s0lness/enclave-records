@@ -146,7 +146,7 @@ def main():
         pressing = b.cmd(0x40, p1=0)
         album = b.cmd(0x40, p1=1)
         info_b = b.get_info()
-        result = verify_chain(album, pressing, info_b["devpub"])
+        result = verify_chain(album, pressing)
         verify_possession(b, pressing)
         print(f'GENUINE: pressing {result["number"]} of {result["edition"]} of '
               f'"{result["title"]}", bound to Flex B, possession proven live.\n'

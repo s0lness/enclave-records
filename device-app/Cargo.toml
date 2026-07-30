@@ -23,6 +23,18 @@ png = "0.18"
 [features]
 default = ["ledger_device_sdk/nano_nbgl"]
 debug = ["ledger_device_sdk/debug"]
+# Development screen probes, off by default: they are how the raw-NBGL paths
+# were measured and filmed, nothing a user does reaches them, and flash on Flex
+# is the scarce resource this app is up against.
+#
+# Two features rather than one because the app only boots inside a `text`
+# window (see AGENTS.md): both probe sets at once overshoot it, so a probe build
+# takes the one it needs. `artprobe` is ART_TEST and the raw `Screen` path
+# behind it, which scripts/art-test.sh and scripts/show-sleeve.sh drive.
+artprobe = []
+# LIBRARY_PREVIEW and CARD_PREVIEW: synthetic library rows and record cards for
+# states no ceremony can reach (three records, `#1000 of 1000`). Capture only.
+uiprobe = []
 
 [package.metadata.ledger]
 curve = ["secp256k1"]

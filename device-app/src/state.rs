@@ -3,7 +3,7 @@
 //! is what makes "a burned number is never a duplicated number" true.
 
 use crate::certs::{ALBUM_CERT_LEN, PRESSING_CERT_LEN, TITLE_MAX};
-use crate::crypto::{self, PUBKEY_LEN};
+use crate::crypto::{self, PUBKEY_LEN, SIG_MAX_LEN};
 use crate::AppSW;
 use ledger_device_sdk::nvm::{AlignedStorage, AtomicStorage, SingleStorage};
 use ledger_device_sdk::NVMData;
@@ -39,7 +39,75 @@ pub struct PresseNvm {
     pub has_pressing: u8,
     pub pressing_cert: [u8; PRESSING_CERT_LEN],
     pub pressing_album_cert: [u8; ALBUM_CERT_LEN],
+
+    /// The bearer key of the held pressing. The album certificate binds the
+    /// copy to *this key*, not to a device, which is what makes a copy
+    /// transferable an unbounded number of times: handing it on costs no
+    /// storage, where a delegation chain would grow by one signed link per
+    /// change of hands and cap out around sixteen.
+    ///
+    /// Possession of the copy IS possession of this key, proven live by
+    /// challenge-response. Giving the copy away means sending the key over the
+    /// paired channel and erasing it here **in the same atomic write**: after
+    /// that the device has nothing left to send, so the same copy cannot be
+    /// given twice.
+    pub pressing_priv: [u8; 32],
+
+    /// The device that handed this copy over, and its signature over the
+    /// handover. Empty when the copy came straight from a press. This is the
+    /// one step of provenance that is *proven* rather than merely displayed.
+    pub pressing_from: [u8; PUBKEY_LEN],
+    pub pressing_from_sig: [u8; crypto::SIG_MAX_LEN],
+    pub pressing_from_sig_len: u8,
+    pub has_from: u8,
+
+    /// Fingerprints of earlier holders, newest last, oldest dropped when full.
+    /// Travels with the copy, so it accumulates across hands instead of
+    /// restarting at each device. Deliberately unsigned and therefore
+    /// **display only**: it says where the copy has been, it does not prove it.
+    pub ring: [[u8; 4]; RING_MAX],
+    pub ring_len: u8,
+
+    /// Set once this device has handed a copy on, and never cleared. Without
+    /// it an empty library is ambiguous: "nothing yet" and "nothing any more"
+    /// look identical, and the second is the one a giver needs to see
+    /// confirmed on screen the moment the copy leaves.
+    pub has_given: u8,
+
+    /// How far this device's copy has gone towards a named recipient.
+    ///
+    /// A give cannot erase and deliver in one instant, so the erase is replaced
+    /// by a *commitment*: the copy stops being usable here (it answers no
+    /// challenge and can go to nobody else) while the bearer key is kept so it
+    /// can be re-sent to that same recipient as many times as a flaky cable
+    /// requires. Deleting instead would mean a dropped frame destroys a copy,
+    /// which is a worse failure than any this design is trying to prevent.
+    ///
+    /// Three states, in one byte, because *when the key left* is the line
+    /// between a promise and a fact:
+    ///
+    /// * `0` -- free. The copy is this device's to use and to give.
+    /// * `1` -- **promised**. A human approved this one recipient and the
+    ///   commitment is in flash, but the sealed bearer key has never left. The
+    ///   copy exists in exactly one place, so the promise can still be taken
+    ///   back (GIVE_CANCEL) without anybody being able to hold two.
+    /// * `2` -- **flown**. The sealed key has been put on the wire. From here
+    ///   the copy may already exist elsewhere, so nothing on this device may
+    ///   un-promise it: only the recipient's receipt ends the state.
+    ///
+    /// Double spending stays impossible in both committed states because the
+    /// commitment names exactly one recipient and is never widened.
+    pub committed: u8,
+
+    /// SHA-256 of the recipient's `devpub`. A hash, not the key: this device
+    /// only ever *compares* it, and 32 bytes of NVM per device is worth more
+    /// than the 65 the key itself would cost.
+    pub committed_to: [u8; 32],
 }
+
+/// How many earlier holders the display ring remembers. Four bytes each, so
+/// the whole history costs 128 bytes whatever the number of transfers.
+pub const RING_MAX: usize = 32;
 
 const EMPTY: PresseNvm = PresseNvm {
     initialized: 0,
@@ -60,7 +128,53 @@ const EMPTY: PresseNvm = PresseNvm {
     has_pressing: 0,
     pressing_cert: [0; PRESSING_CERT_LEN],
     pressing_album_cert: [0; ALBUM_CERT_LEN],
+    pressing_priv: [0; 32],
+    pressing_from: [0; PUBKEY_LEN],
+    pressing_from_sig: [0; crypto::SIG_MAX_LEN],
+    pressing_from_sig_len: 0,
+    has_from: 0,
+    ring: [[0u8; 4]; RING_MAX],
+    ring_len: 0,
+    has_given: 0,
+    committed: 0,
+    committed_to: [0; 32],
 };
+
+impl PresseNvm {
+    /// Drop everything that constitutes holding a copy, in one place so no
+    /// field can be forgotten: the certificates, the bearer key, the proven
+    /// provenance step, the display ring and any outstanding commitment.
+    ///
+    /// This leaves a *value*, not a write. Its whole point is that the caller
+    /// commits it with a single [`Store::put`] alongside whatever else the same
+    /// act changes, so a power cut lands either wholly before or wholly after.
+    /// Splitting it into two writes would open the window where a copy exists
+    /// twice, which is the one thing this design cannot survive.
+    pub fn clear_pressing(&mut self) {
+        self.has_pressing = 0;
+        self.pressing_cert = [0; PRESSING_CERT_LEN];
+        self.pressing_album_cert = [0; ALBUM_CERT_LEN];
+        self.pressing_priv = [0; 32];
+        self.pressing_from = [0; PUBKEY_LEN];
+        self.pressing_from_sig = [0; SIG_MAX_LEN];
+        self.pressing_from_sig_len = 0;
+        self.has_from = 0;
+        self.ring = [[0u8; 4]; RING_MAX];
+        self.ring_len = 0;
+        self.committed = 0;
+        self.committed_to = [0; 32];
+    }
+
+    /// Whether this device can still act as the holder of its copy: answer a
+    /// challenge, or start a give. A committed copy fails this even though the
+    /// certificates and the bearer key are still in flash, because it has been
+    /// promised to someone else and is only being kept deliverable. Promised
+    /// and flown are equally silent: the difference between them is only
+    /// whether the promise can still be taken back, never what the copy can do.
+    pub fn holds_usable_pressing(&self) -> bool {
+        self.has_pressing == 1 && self.committed == 0
+    }
+}
 
 #[link_section = ".nvm_data"]
 static mut DATA: NVMData<AtomicStorage<PresseNvm>> = NVMData::new(AtomicStorage::new(&EMPTY));

@@ -19,6 +19,18 @@ Build actuellement flashé sur les deux Flex:
 > version antérieure du protocole: son `relay/demo.py` construit la trame `CUT`
 > à l'ancien format et **le cut échouera** contre le Lot 1 (voir §5).
 
+> **La cession (§2c) exige un re-sideload.** Le build flashé ci-dessus lie encore
+> le pressage à l'appareil; les clés porteuses, `INS_GIVE_*`/`INS_TAKE_*` et le
+> nouveau format de `PRESS_OFFER` n'existent que dans le build courant du
+> worktree (`data_size` **18944**). Tant que les Flex ne sont pas reflashés, §2a
+> et §2b restent valables et §2c répondra `InsNotSupported`. Un re-sideload vide
+> la NVM: il faut refaire le cut, donc refilmer §2a.
+>
+> `data_size` 18944 est **à une page du plafond mesuré**: l'app cesse de démarrer
+> quelque part entre 18432 et 19456 (cf. `state.rs`). Le boot check passe trois
+> fois sur ce build, mais toute nouvelle croissance de `.nvm_data` doit être
+> re-vérifiée avant sideload, sinon l'app s'installe et meurt sans un mot.
+
 Le relais ne voit jamais de clé: chaque confirmation se fait sur l'écran du
 device. C'est le sens de l'étape des 4 mots.
 
@@ -116,20 +128,69 @@ Débrancher A, ne garder que **B** attaché, couper le wifi, puis:
 wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse-video/scripts/ceremony.sh --verify
 ```
 
-Imprime `GENUINE: pressing 1 of 5 of "Random Access Memories", bound to this
+Imprime `GENUINE: pressing 1 of 5 of "Random Access Memories", held by this
 device, key possession proven live.`
 
 `--verify` ne prend que `paths[0]`: **un seul device doit rester attaché**, et ce
 doit être B. Si A est encore attaché et sort en `paths[0]`, la commande échoue
 (A ne détient aucun pressing).
 
-### 2c. (option) Parcourir la collection d'un device
+### 2c. Cession: B redonne son pressage à A
+
+```powershell
+wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse-video/scripts/give.sh
+```
+
+`paths[0]` donne à `paths[1]`; `--swap` inverse. Le pressage étant lié à une
+**clé porteuse** et non à un appareil, il se cède un nombre illimité de fois.
+Même appairage 4 mots que le press, puis deux confirmations, **le receveur
+d'abord**:
+
+```
+1. Receive Random Access Memories   |  2. Give Random Access Memories
+   #1 of 5?                         |     #1 of 5?
+                                    |
+   From device 3FC2A9B1.            |     To device DCFE1B7F.
+                                    |     You will no longer hold it.
+                                    |
+   [ Cancel ]  [ Receive it ]       |     [ Cancel ]  [ Give it away ]
+```
+
+**À filmer**: les deux taps dans cet ordre, l'écran du donneur qui passe à
+`No records here` / « You gave your copy away. », et celui du receveur où la
+pochette apparaît. Puis la fiche du receveur, page 2, ligne `Collection ID`
+(tapée): la sous-page `Where it came from` nomme l'appareil cédant
+(`XXXXXXXX, the one handover this device can prove.`). La provenance est là et
+pas sur la page 2: celle-ci tient quatre lignes, pas cinq.
+
+> **Une cession interrompue se reprend, elle ne perd rien.** Le donneur ne
+> supprime pas au moment de livrer la clé: il s'*engage* envers ce receveur-là
+> (sa ligne library passe à `#1 of 5 - promised, reconnect XXXXXXXX`, qui nomme
+> le receveur engagé, et `INS_CHALLENGE` répond déjà `NoPressing`). Ce `XXXXXXXX`
+> est le même empreinte que l'écran de confirmation (`To device XXXXXXXX`) et que
+> le `Collection ID` de l'appareil concerné: c'est ce qui permet de retrouver
+> avec quel Flex terminer. Relancer `give.sh` sur les deux mêmes Flex termine la
+> cession, **sans redemander de confirmation au donneur**. L'effacement réel
+> n'a lieu qu'à la réception du reçu du destinataire.
+>
+> Le receveur est interrogé en premier, donc un refus, un appareil déjà occupé
+> ou un certificat invalide ne coûtent rien: le donneur n'a pas encore été
+> sollicité.
+>
+> Seul cas sans retour: un appareil engagé envers un receveur qui ne revient
+> jamais garde un pressage inutilisable pour toujours. Il n'y a pas d'annulation
+> (ce serait exactement une primitive de double dépense).
+
+### 2d. (option) Parcourir la collection d'un device
 
 ```powershell
 wsl -d Ubuntu -- bash /mnt/c/Users/sylve/projects/presse-video/scripts/ceremony.sh --collection a
 ```
 
 (`a` = `paths[0]`, `b` = `paths[1]`.) Tap « Back » sur l'écran pour sortir.
+
+> `give.sh` suit le même patron que `ceremony.sh` (PATH du venv, pas de
+> `scripts/env.sh`), et ne touche ni `APP_DIR` ni `APP_ELF`.
 
 ---
 
@@ -198,8 +259,8 @@ bougé dans le silicium.
 Receive Random Access Memories
 1 of 5?
 
-This pressing is bound to
-this device forever.
+This copy becomes yours to
+keep or to hand on.
 
 [ Cancel ]   [ Receive it ]
 ```
@@ -275,14 +336,27 @@ MAC (32) doit tenir dans un `Lc` de 255.
   `APP_ELF`), mais ne pas s'en servir pour juger le build Lot 1.
 - **Verify offline**: ne garder que B attaché et couper le wifi à l'image.
 - **Ne pas toucher au checkout `C:\Users\sylve\projects\presse`** (occupé).
-- **Un pressage ne se transfère pas d'appareil à appareil.** Le certificat de
-  pressage lie `recvpub` au destinataire au moment du press, et `PRESS_ACCEPT`
-  refuse (`BadCert`) tout certificat dont le `recvpub` n'est pas celui du device.
-  Il n'existe aucune commande de cession, et presser exige un master
-  (`PRESS_OFFER` répond `NoMaster` sans lui). Un appareil ne détient par
-  ailleurs qu'un seul pressage à la fois (`has_pressing` déjà à 1 -> `BadState`).
-  C'est un choix de modèle, pas un manque: « bound to this device forever » est
-  affiché à la réception. Ne pas construire de scène de revente ou de don.
+- **Un pressage se cède, et une cession interrompue se reprend.** Le certificat
+  lie le pressage à une clé porteuse (`holderpub`). `GIVE_OFFER` n'efface pas: il
+  engage le donneur envers UN destinataire nommé. Relancer `give.sh` sur les deux
+  mêmes Flex termine la cession; viser un autre destinataire répond `BadState`
+  définitivement. Une fois le reçu consommé (`GIVE_FINISH`), `GIVE_ALBUM` et
+  `GIVE_OFFER` répondent `NoPressing`.
+- **`GIVE_OFFER` se joue en deux APDU** (`P1=0` la promesse, sous tap; `P1=1` la
+  livraison de la clé scellée). `give.sh` enchaîne les deux, rien à faire de plus
+  à l'écran. Ce qui change à l'image: entre les deux, la promesse est encore
+  reprenable, et **seulement là**.
+- **`give.sh --cancel` reprend une promesse dont la clé n'est jamais partie.** Un
+  seul Flex attaché suffit, la confirmation est sur son écran. Refusé (`0xB10A`)
+  dès que la clé a été envoyée: à partir de là, seul le reçu du destinataire
+  libère le donneur. Utile si une prise se termine sur un donneur engagé.
+- **Un appareil ne détient qu'un seul pressage à la fois.** Le receveur étant
+  interrogé en premier (`TAKE_CONFIRM`), un `BadState` de sa part ne coûte rien:
+  le donneur détient toujours son pressage, non engagé.
+- **La preuve de possession suit la clé, pas l'appareil.** `INS_CHALLENGE` signe
+  avec la clé porteuse et répond `NoPressing` (`0xB108`) sur un appareil qui n'en
+  détient aucun **ou dont le pressage est engagé**: après une cession, `--verify`
+  ne marche que sur le receveur, et il ne marche déjà plus sur un donneur engagé.
 
 ---
 

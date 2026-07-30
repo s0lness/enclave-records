@@ -2,6 +2,11 @@
 # show-sleeve.sh <file.bin> <out.png> - upload a packed sleeve into a fresh
 # emulator and render it full size, so a stored asset can be checked against
 # its host-side preview.
+#
+# The full-size render is ART_TEST, compiled in only under the `artprobe` cargo
+# feature, so APP_ELF must point at such a build:
+#   scripts/build-video.sh -- --features artprobe
+# Without it the device answers 6D00 and the screenshot is of the library.
 source "$(dirname "$0")/env.sh"
 SRC="$1"
 OUT="$2"

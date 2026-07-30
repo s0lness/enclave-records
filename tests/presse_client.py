@@ -31,9 +31,30 @@ INS_PROVISION_ALBUM = 0x66
 INS_PROVISION_PRESSING = 0x67
 INS_GET_BUNDLE = 0x40
 INS_CHALLENGE = 0x41
+# Handing a held copy on, in two phases: the giver commits to one recipient,
+# then the recipient's receipt releases it. See docs/protocol.md.
+INS_GIVE_ALBUM = 0x70
+INS_GIVE_PRESSING = 0x71
+INS_GIVE_RING = 0x72
+INS_GIVE_OFFER = 0x73
+INS_TAKE_ALBUM = 0x74
+INS_TAKE_PRESSING = 0x75
+INS_TAKE_RING = 0x76
+INS_TAKE_ACCEPT = 0x77
+INS_GIVE_HANDOVER = 0x78
+INS_GIVE_FINISH = 0x79
+INS_TAKE_HANDOVER = 0x7A
+INS_TAKE_CONFIRM = 0x7B
+INS_TAKE_RECEIPT = 0x7C
+# Taking back a promise whose key never left. Not part of the ceremony: it is
+# local to the giver and needs no pairing.
+INS_GIVE_CANCEL = 0x7D
 
 SW_OK = "9000"
 SW_SOLD_OUT = "b104"
+SW_NO_PRESSING = "b108"
+# The promise can no longer be taken back: the sealed key has already left.
+SW_KEY_FLOWN = "b10a"
 
 PUBKEY_LEN = 65
 MAC_LEN = 32
@@ -49,6 +70,19 @@ ALBUM_PAYLOAD_LEN = ARTIST_OFF + ARTIST_MAX
 ALBUM_CERT_LEN = ALBUM_PAYLOAD_LEN + 1 + 72
 PRESSING_PAYLOAD_LEN = 4 + 32 + 2 + 2 + PUBKEY_LEN
 PRESSING_CERT_LEN = PRESSING_PAYLOAD_LEN + 1 + 72
+# The bearer key: a secp256k1 scalar, and the width of the HMAC pad that seals
+# it on the wire.
+BEARER_KEY_LEN = 32
+SIG_MAX_LEN = 72
+# The display ring on the wire: its length then the whole fixed-size array.
+RING_MAX = 32
+RING_WIRE_LEN = 1 + RING_MAX * 4
+# The handover frame, identical in both directions so a relay forwards it
+# whole: giver devpub || sig_len || sig.
+HANDOVER_WIRE_LEN = PUBKEY_LEN + 1 + SIG_MAX_LEN
+HANDOVER_TAG = b"presse-handover"
+# The receipt that releases a committed giver: album_id || number || devpub.
+RECEIPT_WIRE_LEN = 32 + 2 + PUBKEY_LEN
 
 INS_SET_ART = 0x62
 INS_GET_ART = 0x64
@@ -66,6 +100,64 @@ def apdu_hex(ins: int, data: bytes = b"", p1: int = 0, p2: int = 0) -> str:
 
 def split_sw(resp_hex: str):
     return bytes.fromhex(resp_hex[:-4]), resp_hex[-4:]
+
+
+# --- screen geometry ---------------------------------------------------------
+#
+# Flex is 480x600 and the pages this app draws are not scrollable: a page that
+# asks for more room than it has is not an error and not a wrap, it is simply
+# drawn under the footer, or past the bottom of the screen. Neither shows up in
+# the OCR text, which is why these are asserted on coordinates.
+
+# The header's separation line and the footer's, measured on the emulator. A
+# page's content lives strictly between them; only the footer's own labels sit
+# below the second.
+HEADER_TEXT_Y = 30
+FOOTER_RULE_Y = 504
+FOOTER_LABEL_Y = 534
+FOOTER_LABELS = ("Back", "Quit")
+
+
+def current_screen(dev, since: int = 0) -> list:
+    """The elements of the screen on display, out of the cumulative event log.
+
+    Each draw re-emits every element of the page, header first, so the screen
+    now up is whatever follows the last header line."""
+    events = [e for e in dev.events()[since:] if "y" in e]
+    heads = [i for i, e in enumerate(events) if e["y"] == HEADER_TEXT_Y]
+    return events[heads[-1]:] if heads else events
+
+
+def is_footer_label(e) -> bool:
+    """The footer's own labels: an action ("Back", "Quit") or the card's pager,
+    which legitimately sit below the footer's rule."""
+    text = e.get("text", "")
+    return e["y"] == FOOTER_LABEL_Y and (text in FOOTER_LABELS or " of " in text)
+
+
+def assert_page_fits(dev, since: int = 0):
+    """Nothing but the footer's own labels may reach past the footer's rule.
+
+    This is what "the page overruns" looks like from outside: the row or line
+    that did not fit is still drawn, at coordinates that put it under the
+    footer, so it shows as glyph tops above the rule (or not at all). The
+    device reports nothing, and the text is present in the OCR either way."""
+    spilled = [
+        e
+        for e in current_screen(dev, since)
+        if not is_footer_label(e) and e["y"] + e["h"] > FOOTER_RULE_Y
+    ]
+    assert not spilled, f"drawn under the footer (rule at y={FOOTER_RULE_Y}): {spilled}"
+
+
+def row_labels(dev, since: int = 0) -> list:
+    """The label of each list row on the page: the text left of the value
+    column, which `label_value_row` pads out with spaces."""
+    return [
+        e["text"].split("  ")[0].strip()
+        for e in current_screen(dev, since)
+        if e["y"] != HEADER_TEXT_Y and not is_footer_label(e)
+    ]
 
 
 class Presse:
@@ -87,21 +179,38 @@ class Presse:
         return sw
 
     def cmd_gated(self, ins: int, data: bytes, button_text: str, wait_text: str):
-        """Fire a UI-gated APDU, wait for its review screen, tap the button."""
+        """Fire a UI-gated APDU, wait for its review screen, tap the button.
+
+        Only screens drawn *after* the command is sent count. The event log is
+        cumulative, so a device that has already been through one ceremony still
+        carries the previous confirmation's words: matching those would tap at
+        coordinates from a screen that is no longer up."""
+        since = len(self.dev.events())
         thread, result = self.dev.apdu_async_start(apdu_hex(ins, data))
-        assert self.dev.wait_for_text(wait_text), (
-            f"{self.dev.name}: never saw '{wait_text}': {self.dev.screen_texts()}"
+        assert self.wait_for_text_since(wait_text, since), (
+            f"{self.dev.name}: never saw a fresh '{wait_text}': "
+            f"{self.dev.screen_texts()[since:]}"
         )
-        self.tap_text(button_text)
+        self.tap_text(button_text, since=since)
         thread.join(timeout=30)
         assert "data" in result, f"{self.dev.name}: gated INS {ins:#x} never returned"
         body, sw = split_sw(result["data"])
         return body, sw
 
-    def tap_text(self, needle: str, timeout: float = 10.0):
+    def wait_for_text_since(self, needle: str, since: int, timeout: float = 15.0) -> bool:
+        """Like SpeculosDevice.wait_for_text, but blind to everything the device
+        had already drawn before `since`."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            for e in self.dev.events():
+            if any(needle in t for t in self.dev.screen_texts()[since:]):
+                return True
+            time.sleep(0.3)
+        return False
+
+    def tap_text(self, needle: str, timeout: float = 10.0, since: int = 0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for e in self.dev.events()[since:]:
                 if needle in e.get("text", "") and "x" in e and "y" in e:
                     self.dev.finger(e["x"], e["y"])
                     return
@@ -120,6 +229,10 @@ class Presse:
         return {
             "has_master": bool(flags & 1),
             "has_pressing": bool(flags & 2),
+            # The copy is promised to a recipient and awaiting its receipt.
+            "committed": bool(flags & 4),
+            # ...and the sealed key has left, so the promise is irrevocable.
+            "key_flown": bool(flags & 8),
             "devpub": devpub,
             "edition": edition,
             "counter": counter,
@@ -158,16 +271,16 @@ def confirm_sas_both(master: Presse, receiver: Presse):
     since_r = len(receiver.dev.events())
     tm, rm = master.dev.apdu_async_start(apdu_hex(INS_PAIR_SAS))
     tr, rr = receiver.dev.apdu_async_start(apdu_hex(INS_PAIR_SAS))
-    assert master.dev.wait_for_text("Words match")
-    assert receiver.dev.wait_for_text("Words match")
-
-    words_m = sas_words_on_screen(master.dev, since_m)
-    words_r = sas_words_on_screen(receiver.dev, since_r)
+    # Wait for the words themselves, not for the button: on a device already
+    # through one ceremony the button's text is still in the cumulative log,
+    # and matching it would read the previous pairing's screen.
+    words_m = wait_for_sas_words(master.dev, since_m)
+    words_r = wait_for_sas_words(receiver.dev, since_r)
     assert words_m == words_r, f"SAS mismatch on screens: {words_m} vs {words_r}"
-    assert len(words_m) == 4
+    assert len(words_m) == 4, f"no 4-word SAS on screen: {words_m}"
 
-    master.tap_text("Words match")
-    receiver.tap_text("Words match")
+    master.tap_text("Words match", since=since_m)
+    receiver.tap_text("Words match", since=since_r)
     tm.join(timeout=30)
     tr.join(timeout=30)
     sas_m, sw_m = split_sw(rm["data"])
@@ -175,6 +288,19 @@ def confirm_sas_both(master: Presse, receiver: Presse):
     assert sw_m == SW_OK and sw_r == SW_OK
     assert sas_m == sas_r, "devices derived different SAS bytes"
     return sas_m
+
+
+def wait_for_sas_words(dev, since: int, timeout: float = 15.0) -> list:
+    """Block until four SAS words have been drawn since `since`, or give up and
+    return whatever was found so the caller can report it."""
+    deadline = time.time() + timeout
+    words = []
+    while time.time() < deadline:
+        words = sas_words_on_screen(dev, since)
+        if len(words) == 4:
+            return words
+        time.sleep(0.3)
+    return words
 
 
 def sas_words_on_screen(dev, since: int = 0) -> list:
@@ -209,14 +335,103 @@ def run_press(master: Presse, receiver: Presse, carry_from: "Presse | None" = No
     the generative placeholder. SET_ART itself never repaints."""
     album_msg = master.cmd(INS_GET_ALBUM)
     req = receiver.cmd(INS_PRESS_REQUEST)
-    cert_mac, sw = master.cmd_gated(INS_PRESS_OFFER, req, "Press this copy", "Press ")
+    # cert || sealed bearer key || MAC. The relay forwards it whole and can
+    # read none of it: the key is masked with the session key it does not have.
+    offer, sw = master.cmd_gated(INS_PRESS_OFFER, req, "Press this copy", "Press ")
     assert sw == SW_OK, f"press offer failed: {sw}"
+    assert len(offer) == PRESSING_CERT_LEN + BEARER_KEY_LEN + MAC_LEN
     receiver.cmd(INS_PRESS_LOAD_ALBUM, album_msg)
     if carry_from is not None:
         carry_sleeve(carry_from, receiver)
-    _, sw = receiver.cmd_gated(INS_PRESS_ACCEPT, cert_mac, "Receive it", "Receive ")
+    _, sw = receiver.cmd_gated(INS_PRESS_ACCEPT, offer, "Receive it", "Receive ")
     assert sw == SW_OK, f"press accept failed: {sw}"
-    return cert_mac[:PRESSING_CERT_LEN]
+    return offer[:PRESSING_CERT_LEN]
+
+
+def give_stage(giver: Presse, taker: Presse, carry_art: bool = False) -> bytes:
+    """Everything up to (not including) the taker's confirmation: the giver
+    reads out what it holds and signs the handover, the taker stages it.
+
+    Nothing here changes state on either device, so an interruption anywhere in
+    this phase costs nothing at all. Ordering within each direction is what the
+    sequence numbers pin, so a relay may interleave the two sides but never
+    reorder one of them."""
+    album_msg = giver.cmd(INS_GIVE_ALBUM)
+    pressing_msg = giver.cmd(INS_GIVE_PRESSING)
+    ring_msg = giver.cmd(INS_GIVE_RING)
+    req = taker.cmd(INS_PRESS_REQUEST)
+    handover = giver.cmd(INS_GIVE_HANDOVER, req)
+    assert len(handover) == HANDOVER_WIRE_LEN + MAC_LEN
+
+    taker.cmd(INS_TAKE_ALBUM, album_msg)
+    taker.cmd(INS_TAKE_PRESSING, pressing_msg)
+    taker.cmd(INS_TAKE_RING, ring_msg)
+    taker.cmd(INS_TAKE_HANDOVER, handover)
+    if carry_art:
+        carry_pressing_sleeve(giver, taker)
+    return pressing_msg[:PRESSING_CERT_LEN]
+
+
+def give_commit(giver: Presse):
+    """GIVE_OFFER P1=0: the promise, and nothing else leaves the device.
+
+    Gated the first time and silent on a retry: the commitment in flash already
+    records the human's approval of exactly this handover, and re-asking would
+    put a hand back on the path where a missed tap strands a copy."""
+    if giver.get_info()["committed"]:
+        giver.cmd(INS_GIVE_OFFER)
+        return
+    _, sw = giver.cmd_gated(INS_GIVE_OFFER, b"", "Give it away", "Give ")
+    assert sw == SW_OK, f"give offer failed: {sw}"
+
+
+def give_offer(giver: Presse) -> bytes:
+    """The whole of the giver's phase 2: promise, then release the sealed key.
+
+    Two commands because the gap between them is the only place a human can
+    still change their mind: while the copy is promised but its key has not
+    left, GIVE_CANCEL can take the promise back. Once P1=1 has run the key is
+    flown and only the recipient's receipt ends the state."""
+    give_commit(giver)
+    sealed = giver.cmd(INS_GIVE_OFFER, p1=1)
+    assert len(sealed) == BEARER_KEY_LEN + MAC_LEN
+    return sealed
+
+
+def give_cancel(giver: Presse):
+    """GIVE_CANCEL: take back a promise whose key never left. UI-gated, and
+    refused outright once the key has flown, so there is no relay-side flag
+    that could turn it into a way of holding a copy twice."""
+    _, sw = giver.cmd_gated(INS_GIVE_CANCEL, b"", "Take it back", "Take back")
+    assert sw == SW_OK, f"give cancel failed: {sw}"
+
+
+def finish_give(giver: Presse, taker: Presse):
+    """The taker acknowledges, the giver erases. Neither half is gated, so this
+    always completes on a live link and never waits on a human."""
+    receipt = taker.cmd(INS_TAKE_RECEIPT)
+    assert len(receipt) == RECEIPT_WIRE_LEN + MAC_LEN
+    giver.cmd(INS_GIVE_FINISH, receipt)
+
+
+def run_give(giver: Presse, taker: Presse, carry_art: bool = False) -> bytes:
+    """One whole transfer over an already-paired channel, resumable.
+
+    Safe to re-run against the same two devices after an interruption at any
+    point: a giver that already committed re-sends the same key silently, and a
+    taker that already stored the copy needs only to acknowledge it."""
+    if taker.get_info()["has_pressing"]:
+        # The copy landed; only its acknowledgement went missing.
+        cert = taker.cmd(INS_GET_BUNDLE, p1=0)
+        finish_give(giver, taker)
+        return cert
+
+    cert = give_stage(giver, taker, carry_art=carry_art)
+    _, sw = taker.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
+    assert sw == SW_OK, f"take confirm failed: {sw}"
+    taker.cmd(INS_TAKE_ACCEPT, give_offer(giver))
+    finish_give(giver, taker)
+    return cert
 
 
 # --- independent verification (no device code, no session secrets) ---
@@ -240,10 +455,10 @@ def parse_pressing_cert(cert: bytes):
     assert len(cert) == PRESSING_CERT_LEN and cert[:4] == b"PRP1"
     album_id = cert[4:36]
     number, edition = struct.unpack_from("<HH", cert, 36)
-    recvpub = cert[40 : 40 + PUBKEY_LEN]
+    holderpub = cert[40 : 40 + PUBKEY_LEN]
     sig_len = cert[PRESSING_PAYLOAD_LEN]
     sig = cert[PRESSING_PAYLOAD_LEN + 1 : PRESSING_PAYLOAD_LEN + 1 + sig_len]
-    return album_id, number, edition, recvpub, sig, cert[:PRESSING_PAYLOAD_LEN]
+    return album_id, number, edition, holderpub, sig, cert[:PRESSING_PAYLOAD_LEN]
 
 
 def ecdsa_verify(pubkey_uncompressed: bytes, payload: bytes, sig_der: bytes) -> bool:
@@ -255,27 +470,45 @@ def ecdsa_verify(pubkey_uncompressed: bytes, payload: bytes, sig_der: bytes) -> 
         return False
 
 
-def verify_chain(album_cert: bytes, pressing_cert: bytes, holder_devpub: bytes) -> dict:
-    """Full offline verification: album self-signature, pressing signature,
-    album_id linkage, device binding, number sanity. The album signature now
-    also covers the sleeve hash, so a returned sleeve_hash is authenticated."""
+def handover_message(
+    album_id: bytes, number: int, giverpub: bytes, takerpub: bytes
+) -> bytes:
+    """The record a giver signs with its device key, mirroring give.rs.
+
+    Both devices are named, so the signature legitimises one handover between
+    one pair of devices and cannot be lifted onto another."""
+    assert len(album_id) == 32
+    assert len(giverpub) == PUBKEY_LEN and len(takerpub) == PUBKEY_LEN
+    return HANDOVER_TAG + album_id + struct.pack("<H", number) + giverpub + takerpub
+
+
+def verify_chain(album_cert: bytes, pressing_cert: bytes) -> dict:
+    """Offline verification of the certificates alone: album self-signature,
+    pressing signature, album_id linkage, edition match, number sanity. The
+    album signature also covers the sleeve hash, so a returned sleeve_hash is
+    authenticated.
+
+    This says the copy is real; it does NOT say who holds it. The certificate
+    names a bearer key, not a device, so the holder question is answered only by
+    `verify_possession`, live, against that key. The two together are the
+    verification: neither alone is."""
     albpub, title, artist, edition, sleeve_hash, alb_sig, alb_payload = parse_album_cert(
         album_cert
     )
     assert ecdsa_verify(albpub, alb_payload, alb_sig), "album cert signature invalid"
 
-    album_id, number, p_edition, recvpub, p_sig, p_payload = parse_pressing_cert(pressing_cert)
+    album_id, number, p_edition, holderpub, p_sig, p_payload = parse_pressing_cert(pressing_cert)
     assert ecdsa_verify(albpub, p_payload, p_sig), "pressing cert signature invalid"
     assert album_id == hashlib.sha256(albpub).digest(), "album_id mismatch"
     assert p_edition == edition, "edition mismatch between certs"
     assert 1 <= number <= edition, "pressing number out of range"
-    assert recvpub == holder_devpub, "pressing not bound to this device"
     return {
         "title": title,
         "artist": artist,
         "number": number,
         "edition": edition,
         "sleeve_hash": sleeve_hash,
+        "holderpub": holderpub,
     }
 
 
@@ -322,16 +555,30 @@ def carry_sleeve(src: "Presse", dst: "Presse"):
     return hashlib.sha256(art).hexdigest()
 
 
+def carry_pressing_sleeve(src: "Presse", dst: "Presse"):
+    """Copy a held copy's cover from one device's pressing slot to the other's,
+    for a transfer. The record moves whole: without this the taker would hold a
+    genuine copy and render the generative fallback for its cover."""
+    art = read_art(src, SLOT_PRESSING)
+    if not any(art):
+        return None
+    upload_art(dst, art, SLOT_PRESSING)
+    return hashlib.sha256(art).hexdigest()
+
+
 def verify_possession(presse: Presse, pressing_cert: bytes):
-    """Challenge-response: the device proves it holds the bound key, live."""
+    """Challenge-response: the device proves, live, that it holds the bearer
+    key the certificate names. This is the whole of "who owns this copy": a
+    device that gave it away can no longer answer, and one that never had it
+    never could."""
     import os
 
-    _, _, _, recvpub, _, _ = parse_pressing_cert(pressing_cert)
+    _, _, _, holderpub, _, _ = parse_pressing_cert(pressing_cert)
     nonce = os.urandom(32)
     body = presse.cmd(INS_CHALLENGE, nonce)
     sig_len = body[0]
     sig = body[1 : 1 + sig_len]
-    assert ecdsa_verify(recvpub, b"presse-verify" + nonce, sig), "challenge signature invalid"
+    assert ecdsa_verify(holderpub, b"presse-verify" + nonce, sig), "challenge signature invalid"
 
 
 # --- relay-side certificate authority (development provisioning) ------------
@@ -390,25 +637,44 @@ def build_album_cert(
     return bytes(cert)
 
 
+def demo_bearer_key(title: str, artist: str, edition: int, number: int) -> tuple[bytes, bytes]:
+    """A reproducible bearer keypair for provisioning, derived from the copy's
+    identity for the same reason `demo_album_key` is: re-provisioning after an
+    NVM wipe must reproduce the copy, not a look-alike. Development only; a real
+    press mints this from the master's TRNG and it exists nowhere else."""
+    seed = hashlib.sha256(
+        b"presse-demo-bearer|" + f"{title}|{artist}|{edition}|{number}".encode()
+    ).digest()
+    sk = SigningKey.from_string(seed, curve=SECP256k1)
+    return seed, sk.get_verifying_key().to_string("uncompressed")
+
+
 def build_pressing_cert(
-    priv: bytes, album_id: bytes, number: int, edition: int, recvpub: bytes
+    priv: bytes, album_id: bytes, number: int, edition: int, holderpub: bytes
 ) -> bytes:
     """Mirror of certs.rs build_pressing_cert."""
-    assert len(album_id) == 32 and len(recvpub) == PUBKEY_LEN
+    assert len(album_id) == 32 and len(holderpub) == PUBKEY_LEN
     assert 0 < number <= edition, "number outside the edition"
     cert = bytearray(PRESSING_CERT_LEN)
     cert[0:4] = PRESSING_MAGIC
     cert[4:36] = album_id
     struct.pack_into("<HH", cert, 36, number, edition)
-    cert[40 : 40 + PUBKEY_LEN] = recvpub
+    cert[40 : 40 + PUBKEY_LEN] = holderpub
     sig = ecdsa_sign(priv, bytes(cert[:PRESSING_PAYLOAD_LEN]))
     cert[PRESSING_PAYLOAD_LEN] = len(sig)
     cert[PRESSING_PAYLOAD_LEN + 1 : PRESSING_PAYLOAD_LEN + 1 + len(sig)] = sig
     return bytes(cert)
 
 
-def provision_pressing(presse: "Presse", album_cert: bytes, pressing_cert: bytes):
-    """Push a relay-signed pressing into a device. Refused if it already holds
-    one: provisioning only ever adds a record, so "bound forever" stays true."""
+def provision_pressing(
+    presse: "Presse", album_cert: bytes, pressing_cert: bytes, bearer_priv: bytes
+):
+    """Push a relay-signed pressing, and the bearer key that owns it, into a
+    device. Refused if it already holds one: provisioning only ever adds.
+
+    The key crosses the USB cable in the clear. There is no pairing on this
+    path and so no session key to seal it with, which is exactly why this is a
+    development path and not a ceremony."""
+    assert len(bearer_priv) == BEARER_KEY_LEN
     presse.cmd(INS_PROVISION_ALBUM, album_cert)
-    presse.cmd(INS_PROVISION_PRESSING, pressing_cert)
+    presse.cmd(INS_PROVISION_PRESSING, pressing_cert + bearer_priv)

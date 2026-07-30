@@ -1,18 +1,25 @@
 //! RAM-only pairing session. Dies on power cycle, on any MAC failure, and on
 //! SAS rejection: a session is cheap, trust is not.
 
-use crate::certs::ALBUM_CERT_LEN;
+use crate::certs::{ALBUM_CERT_LEN, PRESSING_CERT_LEN};
 use crate::crypto::{self, PUBKEY_LEN};
+use crate::state::RING_MAX;
 use crate::wordlist::WORDS;
 use crate::AppSW;
 
 const COMMIT_TAG: &[u8] = b"presse-commit";
 const SAS_TAG: &[u8] = b"presse-sas";
 const SESSION_TAG: &[u8] = b"presse-session";
+/// Domain separator for the bearer-key pad. Distinct from every other use of
+/// the session key so a pad can never collide with a MAC or a SAS value.
+const BEARER_TAG: &[u8] = b"presse-bearer";
 
 /// Online SAS-grinding cap: pairing attempts allowed per power cycle.
 const MAX_ATTEMPTS: u8 = 8;
 
+/// The two positions of the pairing handshake. Named for the press ceremony
+/// that introduced them: the initiator (a master offering a copy, or a giver
+/// handing one on) and the responder (the device that ends up holding it).
 #[derive(Clone, Copy, PartialEq)]
 pub enum Role {
     Master,
@@ -47,6 +54,33 @@ pub struct Session {
     /// PRESS_ACCEPT.
     pub staged_album: [u8; ALBUM_CERT_LEN],
     pub staged_album_valid: bool,
+    /// A transfer's pressing cert and holder ring, staged by the taker before
+    /// TAKE_ACCEPT. A copy's three pieces (album, pressing, ring) each exceed
+    /// what is left of a 255-byte frame once the others are in it, so they
+    /// arrive separately and are held here until the accept binds them
+    /// together. RAM only: an interrupted transfer leaves nothing behind.
+    pub staged_pressing: [u8; PRESSING_CERT_LEN],
+    pub staged_pressing_valid: bool,
+    pub staged_ring: [[u8; 4]; RING_MAX],
+    pub staged_ring_len: u8,
+    pub staged_ring_valid: bool,
+    /// The handover record staged by the taker: who is giving, and their
+    /// signature over it. Verified at the confirmation and again at the accept,
+    /// never here, so the relay stays free to stage in any order it likes.
+    pub staged_giverpub: [u8; PUBKEY_LEN],
+    pub staged_handover_sig: [u8; crate::crypto::SIG_MAX_LEN],
+    pub staged_handover_sig_len: u8,
+    pub staged_handover_valid: bool,
+    /// The peer's device key, learned from the frame it produced for
+    /// PRESS_REQUEST. The giver needs it twice (to sign the handover, then to
+    /// check its commitment) but the taker sends it once, so it is remembered
+    /// here rather than asked for again.
+    pub peer_devpub: [u8; PUBKEY_LEN],
+    pub peer_devpub_valid: bool,
+    /// Set by the taker's confirmation screen. The accept that follows carries
+    /// no gate of its own, so this is the only thing standing between an
+    /// incoming copy and NVM.
+    pub take_confirmed: bool,
 }
 
 impl Session {
@@ -64,6 +98,18 @@ impl Session {
             recv_seq: 0,
             staged_album: [0; ALBUM_CERT_LEN],
             staged_album_valid: false,
+            staged_pressing: [0; PRESSING_CERT_LEN],
+            staged_pressing_valid: false,
+            staged_ring: [[0u8; 4]; RING_MAX],
+            staged_ring_len: 0,
+            staged_ring_valid: false,
+            staged_giverpub: [0; PUBKEY_LEN],
+            staged_handover_sig: [0; crate::crypto::SIG_MAX_LEN],
+            staged_handover_sig_len: 0,
+            staged_handover_valid: false,
+            peer_devpub: [0; PUBKEY_LEN],
+            peer_devpub_valid: false,
+            take_confirmed: false,
         }
     }
 
@@ -132,6 +178,30 @@ impl Session {
         } else {
             Err(AppSW::BadState)
         }
+    }
+
+    /// Mask a 32-byte bearer key with a pad derived from the session key, which
+    /// both seals and opens it (XOR is its own inverse).
+    ///
+    /// No new primitive is introduced: HMAC-SHA256 under a dedicated tag is
+    /// already this protocol's KDF, and its output is exactly the key's width,
+    /// so the whole cipher is one XOR. Integrity is not this function's job and
+    /// must not be attempted here: the session MAC already covers the
+    /// ciphertext, and a second integrity mechanism would only be a second
+    /// thing to get wrong.
+    ///
+    /// `seq` is the sequence number of the frame carrying the key, so no two
+    /// frames of a session ever share a pad. That matters: a device holding
+    /// both a master and a pressing can press one copy and give another inside
+    /// a single pairing, and a reused pad would publish the XOR of the two
+    /// bearer keys to anyone watching the wire.
+    pub fn bearer_xor(&self, ins: u8, seq: u8, key: &[u8; 32]) -> Result<[u8; 32], AppSW> {
+        let pad = crypto::hmac_sha256(&self.session_key, &[BEARER_TAG, &[ins, seq]])?;
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = key[i] ^ pad[i];
+        }
+        Ok(out)
     }
 
     /// MAC an outgoing payload and bump the send counter.

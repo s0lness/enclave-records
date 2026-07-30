@@ -8,10 +8,13 @@ use crate::AppSW;
 use alloc::format;
 use ledger_device_sdk::io::{Command, CommandResponse};
 
-const MAC_LEN: usize = 32;
+pub const MAC_LEN: usize = 32;
+/// Width of a bearer key's scalar, and so of its sealed form: the pad is one
+/// HMAC-SHA256 output, which is exactly this wide.
+pub const BEARER_KEY_LEN: usize = 32;
 
-const INS_GET_ALBUM: u8 = 0x30;
-const INS_PRESS_REQUEST: u8 = 0x31;
+pub const INS_GET_ALBUM: u8 = 0x30;
+pub const INS_PRESS_REQUEST: u8 = 0x31;
 const INS_PRESS_OFFER: u8 = 0x32;
 
 fn title_str(title: &[u8], title_len: u8) -> Result<&str, AppSW> {
@@ -20,7 +23,7 @@ fn title_str(title: &[u8], title_len: u8) -> Result<&str, AppSW> {
 
 /// First 4 bytes of SHA256(devpub): the device fingerprint, shown as 8 hex
 /// chars wherever a recipient is named.
-fn fingerprint_bytes(devpub: &[u8; PUBKEY_LEN]) -> Result<[u8; 4], AppSW> {
+pub fn fingerprint_bytes(devpub: &[u8; PUBKEY_LEN]) -> Result<[u8; 4], AppSW> {
     let hash = crypto::sha256(&[devpub])?;
     let mut fp = [0u8; 4];
     fp.copy_from_slice(&hash[..4]);
@@ -69,8 +72,16 @@ pub fn handler_press_request<'a>(
 }
 
 /// PRESS_OFFER (master, paired): data = receiver devpub(65) || MAC(32).
+/// Returns PressingCert(178) || sealed bearer key(32) || MAC(32) = 242 bytes,
+/// inside the 255-byte frame.
+///
 /// UI-gated. Decrements the counter atomically before the certificate leaves
 /// the device: a power cut burns a number, never duplicates one.
+///
+/// The copy is bound to a bearer key minted here, not to the recipient's
+/// device: the recipient's public key names *who* the press is for, on screen
+/// and in the master's own log, but never enters the certificate. That is what
+/// lets the copy be handed on later without the album key ever signing again.
 pub fn handler_press_offer<'a>(
     command: Command<'a>,
     session: &mut Session,
@@ -93,11 +104,11 @@ pub fn handler_press_offer<'a>(
     if nvm.counter == 0 {
         return Err(AppSW::SoldOut);
     }
-    let mut recvpub = [0u8; PUBKEY_LEN];
-    recvpub.copy_from_slice(payload);
+    let mut recipient_pub = [0u8; PUBKEY_LEN];
+    recipient_pub.copy_from_slice(payload);
     let number = nvm.edition - nvm.counter + 1;
     let title = title_str(&nvm.title, nvm.title_len)?;
-    let fp_bytes = fingerprint_bytes(&recvpub)?;
+    let fp_bytes = fingerprint_bytes(&recipient_pub)?;
     let fp = fingerprint_str(&fp_bytes);
 
     let message = format!("Press {}\n{} of {}?", title, number, nvm.edition);
@@ -109,7 +120,11 @@ pub fn handler_press_offer<'a>(
     }
 
     let album_id = crypto::sha256(&[&nvm.alb_pub])?;
-    let cert = build_pressing_cert(&nvm.alb_priv, &album_id, number, nvm.edition, &recvpub)?;
+    let (bearer_priv, bearer_pub) = crypto::gen_keypair()?;
+    let cert = build_pressing_cert(&nvm.alb_priv, &album_id, number, nvm.edition, &bearer_pub)?;
+    // Sealed against the send counter this very frame will carry, so the pad is
+    // the frame's own and cannot be shared with another transfer in the session.
+    let sealed = session.bearer_xor(INS_PRESS_OFFER, session.send_seq, &bearer_priv)?;
 
     nvm.counter -= 1;
     let log_idx = (number - 1) as usize;
@@ -121,9 +136,17 @@ pub fn handler_press_offer<'a>(
     }
     Store::put(&nvm);
 
-    let mac = session.mac_send(INS_PRESS_OFFER, &cert)?;
+    // The master keeps no copy of the bearer key: it minted the copy, it does
+    // not hold it. Scrub the scalar now that it is sealed for the wire.
+    let mut bearer_priv = bearer_priv;
+    bearer_priv.fill(0);
+
+    let mut payload = [0u8; PRESSING_CERT_LEN + BEARER_KEY_LEN];
+    payload[..PRESSING_CERT_LEN].copy_from_slice(&cert);
+    payload[PRESSING_CERT_LEN..].copy_from_slice(&sealed);
+    let mac = session.mac_send(INS_PRESS_OFFER, &payload)?;
     let mut response = comm.begin_response();
-    response.append(&cert)?;
+    response.append(&payload)?;
     response.append(&mac)?;
     Ok(response)
 }
@@ -151,8 +174,14 @@ pub fn handler_press_load_album<'a>(
     Ok(response)
 }
 
-/// PRESS_ACCEPT (receiver, paired): data = PressingCert || MAC. Verifies the
-/// full chain against the staged album, gates on the human, stores.
+/// PRESS_ACCEPT (receiver, paired): data = PressingCert(178) || sealed bearer
+/// key(32) || MAC(32) = 242 bytes, inside the 255-byte frame. Verifies the full
+/// chain against the staged album, gates on the human, stores.
+///
+/// The binding this checks is possession, not address: the bearer key must be
+/// the one the certificate's `holderpub` was signed over. A relay that swaps in
+/// a scalar of its own is caught there, because it cannot make the album key
+/// sign the matching point.
 pub fn handler_press_accept<'a>(
     command: Command<'a>,
     session: &mut Session,
@@ -162,13 +191,19 @@ pub fn handler_press_accept<'a>(
         return Err(AppSW::BadState);
     }
     let data = command.get_data();
-    if data.len() != PRESSING_CERT_LEN + MAC_LEN {
+    if data.len() != PRESSING_CERT_LEN + BEARER_KEY_LEN + MAC_LEN {
         return Err(AppSW::WrongApduLength);
     }
-    let (payload, mac) = data.split_at(PRESSING_CERT_LEN);
+    let (payload, mac) = data.split_at(PRESSING_CERT_LEN + BEARER_KEY_LEN);
+    // Unsealed before the MAC check only because the pad is keyed to the
+    // *current* receive counter, which the check itself advances. The plaintext
+    // is not looked at until the MAC has passed.
+    let mut sealed = [0u8; BEARER_KEY_LEN];
+    sealed.copy_from_slice(&payload[PRESSING_CERT_LEN..]);
+    let bearer_priv = session.bearer_xor(INS_PRESS_OFFER, session.recv_seq, &sealed)?;
     session.mac_verify(INS_PRESS_OFFER, payload, mac)?;
     let mut cert_buf = [0u8; PRESSING_CERT_LEN];
-    cert_buf.copy_from_slice(payload);
+    cert_buf.copy_from_slice(&payload[..PRESSING_CERT_LEN]);
 
     let staged_album = session.staged_album;
     let album = parse_album_cert(&staged_album)?;
@@ -181,10 +216,10 @@ pub fn handler_press_accept<'a>(
     if pressing.edition != album.edition {
         return Err(AppSW::BadCert);
     }
-    let mut nvm = Store::get()?;
-    if pressing.recvpub != nvm.dev_pub {
+    if crypto::pubkey_of(&bearer_priv)? != pressing.holderpub {
         return Err(AppSW::BadCert);
     }
+    let mut nvm = Store::get()?;
     if nvm.has_pressing == 1 {
         return Err(AppSW::BadState);
     }
@@ -195,7 +230,7 @@ pub fn handler_press_accept<'a>(
     let approved = crate::app_ui::menu::ceremony_choice().show(
         comm,
         &message,
-        "This pressing is bound to\nthis device forever.",
+        "This copy becomes yours to\nkeep or to hand on.",
         "Receive it",
         "Cancel",
     );
@@ -206,6 +241,10 @@ pub fn handler_press_accept<'a>(
     nvm.has_pressing = 1;
     nvm.pressing_cert = cert_buf;
     nvm.pressing_album_cert = staged_album;
+    nvm.pressing_priv = bearer_priv;
+    // Straight from the press: no earlier holder to name, and no ring yet.
+    nvm.has_from = 0;
+    nvm.ring_len = 0;
     Store::put(&nvm);
 
     let response = comm.begin_response();

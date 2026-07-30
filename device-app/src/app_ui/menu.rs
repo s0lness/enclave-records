@@ -46,6 +46,10 @@ fn tagline() -> String {
                 core::str::from_utf8(&album.title[..album.title_len as usize]),
                 crate::certs::parse_pressing_cert(&nvm.pressing_cert, &album.albpub),
             ) {
+                // TODO: a promised copy (nvm.committed != 0) still reads
+                // "Holding:" here. It should say it is promised, as the Flex
+                // library row does. Unverified: only the Flex SDK is installed,
+                // so no Nano build can be booted to check the wording.
                 lines.push(format!(
                     "Holding: {} ({} of {})",
                     title, pressing.number, pressing.edition

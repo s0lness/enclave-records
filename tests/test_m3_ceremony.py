@@ -52,7 +52,12 @@ def test_full_ceremony_and_offline_verification(ceremony):
     # Offline verification from B's stored bundle, plus live possession proof.
     pressing_cert = receiver.cmd(0x40, p1=0)
     stored_album = receiver.cmd(0x40, p1=1)
-    result = verify_chain(stored_album, pressing_cert, info_b["devpub"])
+    # The certificates say the copy is real; only the live challenge says who
+    # holds it, since the binding is to a bearer key and not to a device.
+    result = verify_chain(stored_album, pressing_cert)
+    assert result["holderpub"] != info_b["devpub"], (
+        "the copy must be bound to a fresh bearer key, never to the device key"
+    )
     assert result["title"] == TITLE
     assert result["artist"] == ARTIST
     assert result["number"] == 1
