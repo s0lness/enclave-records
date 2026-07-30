@@ -6,6 +6,11 @@ phone/reader). The protocol stays secure when the relay lies, drops, replays,
 reorders, or substitutes messages. The reference verifier is
 tests/presse_client.py (python-ecdsa, shares no code with the device app).
 
+This file is the wire formats, the APDU map and the state machine. What the
+guarantees rest on and every way a copy can be lost are in
+[threat-model.md](threat-model.md); what the object is and what it is worth is in
+the [README](../README.md).
+
 Curve: secp256k1. Hash: SHA-256. MAC/KDF: HMAC-SHA256.
 Pubkeys: 65-byte uncompressed SEC1. Signatures: deterministic ECDSA (RFC6979),
 DER-encoded, length-prefixed, in a zero-padded 72-byte field.
@@ -489,6 +494,10 @@ never a vault**: it relays frames it cannot read, and the one thing it must neve
 become is a place where a copy of the device's state sits waiting to be put back.
 
 ## Threat model status
+
+One line per attack: the defence, and the test that exercises it. The reasoning
+behind these choices, and the losses they knowingly accept, are in
+[threat-model.md](threat-model.md).
 
 - Relay key substitution -> different SAS words, humans abort. (tested, M4)
 - Relay substitutes the bearer key -> the taker derives its point and finds it
