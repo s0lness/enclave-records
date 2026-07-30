@@ -71,44 +71,102 @@ This file is about what the object is and what it is worth.
 
 ## How it works
 
+The whole life of one copy: A cuts an edition of 5, presses **#1** onto B, and B
+hands that copy on to C. One diagram and not two, because a press and a give are
+the same shape (pair, move a bearer key under the paired channel, prove
+possession on the far side), and that is the fact worth seeing.
+
 ```mermaid
 sequenceDiagram
     actor AH as Artist
     participant A as Flex A (master)
     participant R as Laptop (untrusted relay)
-    participant B as Flex B (receiver)
-    actor BH as Collector
+    participant B as Flex B (receiver, then giver)
+    actor BH as Collector B
+    participant C as Flex C (taker)
+    actor CH as Collector C
 
-    Note over A: CUT
-    AH->>A: upload sleeve, cut album, edition of 5
-    A->>A: TRNG album key, seal sleeve hash and edition into a signed AlbumCert
+    Note over AH,A: CUT
+    AH->>A: upload the sleeve, then cut an edition of 5
+    A->>A: TRNG album key, sleeve hash and edition sealed into a signed AlbumCert
+    Note over A: the counter starts at 5, inside the secure element
 
-    Note over A,B: PAIR, commit-reveal ECDH through the relay
-    A->>R: commitment
+    Note over A,B: PAIR, commit-then-reveal ECDH through the relay
+    A->>R: commitment to A's ephemeral key
     R->>B: commitment
-    B->>R: ephemeral key
-    R->>A: ephemeral key
-    A->>R: reveal
-    R->>B: reveal
+    B->>R: ephemeral key B
+    R->>A: ephemeral key B
+    A->>R: reveal A's ephemeral key
+    R->>B: reveal, checked against the commitment or hard abort
     Note over A,B: both screens show the SAME 4 words
-    AH-->>BH: compare words out loud
+    AH-->>BH: compare the words out loud
     AH->>A: tap Words match
     BH->>B: tap Words match
     Note over A,B: a lying relay makes the words differ, humans abort
 
-    Note over A,B: PRESS
-    B->>R: request, device pubkey B
-    R->>A: request
-    A->>A: counter 5 to 4 in silicon, mint a bearer key, sign PressingCert over it
-    A->>R: PressingCert + the bearer key, sealed to this session
-    R->>B: PressingCert + sealed bearer key
-    BH->>B: tap Receive
-    Note over A: the master wipes its copy of the bearer key
+    Note over A,B: PRESS, copy 1 of 5 onto B
+    A->>R: AlbumCert, MACed to this session
+    B->>R: device pubkey B
+    R->>A: device pubkey B
+    AH->>A: tap Press this copy, 1 of 5, for device 3FC2A9B1
+    A->>A: mint a bearer key, sign PressingCert 1 of 5 over its public half
+    A->>A: seal the scalar to this session, counter 5 to 4, one atomic write
+    A->>A: wipe its own copy of the scalar, all of it before the reply leaves
+    A->>R: PressingCert plus the sealed bearer key
+    R->>B: AlbumCert, then PressingCert plus the sealed key
+    B->>B: chain verifies, and the scalar's point is the signed holderpub
+    BH->>B: tap Receive it
+    Note over B: the bearer key is in B's chip now, and nowhere else
 
-    Note over B: VERIFY, offline, no network
+    Note over BH,B: VERIFY, offline, no network
     BH->>B: challenge, a random nonce
-    B->>BH: signature by the bearer key and the cert chain
+    B->>BH: signature by the bearer key, plus the cert chain
     Note over BH: GENUINE, pressing 1 of 5, held by this device
+
+    Note over B,C: GIVE, the same ceremony carrying a key instead of minting one
+    B->>R: commitment to B's ephemeral key
+    R->>C: commitment
+    C->>R: ephemeral key C
+    R->>B: ephemeral key C
+    B->>R: reveal B's ephemeral key
+    R->>C: reveal, checked against the commitment or hard abort
+    Note over B,C: the SAME 4 words again, this time on B and C
+    BH-->>CH: compare the words out loud
+    BH->>B: tap Words match
+    CH->>C: tap Words match
+
+    Note over B,C: phase 1, nothing has changed on either device yet
+    B->>R: AlbumCert, PressingCert, ring of earlier holders, 3 MACed frames
+    C->>R: device pubkey C, the press's own request command reused
+    R->>B: device pubkey C
+    B->>R: handover record, both devices named, signed with B's device key
+    R->>C: all of it
+    C->>C: chain and handover signature verify, and C holds no copy yet
+    CH->>C: tap Receive it, 1 of 5, from device 3FC2A9B1
+    Note over B,C: the taker is asked FIRST, so a refusal costs the giver nothing
+
+    Note over B: phase 2, the commitment and its release
+    R->>B: GIVE_OFFER p1=0
+    BH->>B: tap Give it away, to device 9E4C71D0
+    B->>B: committed = 1, promised to C, one atomic write
+    Note over B: promised: silent here, answers no challenge, offerable to nobody else
+    Note over B: the key never left, so GIVE_CANCEL still takes the promise back
+    R->>B: GIVE_OFFER p1=1
+    B->>B: committed = 2, key flown, written BEFORE the key is sealed
+    Note over B: from here GIVE_CANCEL is refused, KeyFlown 0xB10A, and draws no screen
+    B->>R: sealed bearer key
+    R->>C: sealed bearer key
+    C->>C: the scalar's point is the signed holderpub, so store it
+    C->>C: keep B's signed handover, append B's fingerprint to the ring
+    C->>R: receipt, MACed under the session key
+    R->>B: receipt
+    B->>B: GIVE_FINISH erases key, certs and commitment in one atomic write
+    Note over B: B answers no challenge, and its library says it gave its copy away
+
+    Note over CH,C: VERIFY again, and the copy is C's
+    CH->>C: challenge, a fresh nonce
+    C->>CH: signature by the same bearer key, plus the same cert chain
+    Note over CH: GENUINE, 1 of 5, previous holder 3FC2A9B1, proven
 ```
 
 ```mermaid
@@ -132,11 +190,18 @@ flowchart LR
    both screens show the same 4 words, drawn from a 256-word list. The humans
    compare them out loud: a man-in-the-middle relay cannot make the two screens
    agree.
-3. **Press** - A signs "pressing 1 of 5, bound to this bearer key" and its
-   counter decrements in silicon, atomically, *before* the certificate leaves.
-   At 0: sold out, forever. A power cut burns a number, it never duplicates one.
+3. **Press** - the artist confirms "1 of 5, for device 3FC2A9B1" on the master's
+   own screen. A then mints a bearer key, signs "pressing 1 of 5, bound to this
+   key", seals the key to the paired session and wipes its own copy of it, and
+   the counter decrements in silicon, atomically, *before* the reply leaves the
+   device. At 0: sold out, forever. A power cut burns a number, it never
+   duplicates one. The receiver stores the copy only if the scalar it received
+   is the one the certificate names.
 4. **Verify** - offline: chain verification plus a nonce the holder's secure
    element signs live with the bearer key.
+5. **Give** - the copy changes hands through that same ceremony: pair, move the
+   bearer key under the paired channel, prove possession on the other side. The
+   giver keeps nothing. How it survives an interruption is the next section.
 
 ### Giving it on
 
@@ -180,7 +245,7 @@ An earlier build showed "given away" the moment a copy was promised, so an
 interrupted transfer looked exactly like a finished one and nobody knew a device
 had to be reconnected. Now:
 
-- a promised copy's library row reads `#1 of 5 - promised, reconnect 3FC2A9B1`,
+- a promised copy's library row reads `#1 of 5 - promised, reconnect 9E4C71D0`,
   naming the fingerprint of the device the copy is owed to. Both committed
   states say the same thing, deliberately: the owner's next move is identical
   either way (find that device), and the row's job is to be actionable, not

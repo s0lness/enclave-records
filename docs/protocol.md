@@ -159,8 +159,14 @@ and give another) from sharing a pad and publishing the XOR of two keys.
                     bearerkey over SHA256("presse-verify" || nonce).
                     NoPressing when the device holds no copy.
 0x50 RESET_MASTER   [UI, scary] -> wipes the master
-0x62 SET_ART        data = offset(2 LE) || chunk(64)   -> ok   (public art upload)
-0x64 GET_ART        p1 = chunk index                   -> chunk(<=64)
+0x62 SET_ART        p1 = slot (0 master, 1 pressing)
+                    data = offset(2 LE) || chunk(64)   -> ok   (public art upload)
+0x64 GET_ART        p1 = chunk index, p2 = slot        -> chunk(<=64)
+
+  development provisioning: the laptop acts as the master. No pairing, no UI
+  gate, compiled into the current build. See the README's out-of-scope section.
+0x66 PROVISION_ALBUM    data = AlbumCert(223)                            -> ok (staged)
+0x67 PROVISION_PRESSING data = PressingCert(178) || bearer key(32)  [210] -> ok
 
   transfer, over the same pairing (giver takes the master position).
   Phase 1, free to abandon -- nothing on either device has changed yet:
@@ -185,6 +191,11 @@ and give another) from sharing a pad and publishing the XOR of two keys.
                     -> album_id(32) || number(2) || devpub(65) || mac(32)      [131]
 0x79 GIVE_FINISH    (giver, paired) data = the TAKE_RECEIPT reply -> ok        [131]
 ```
+Three more instructions exist only behind their own cargo features and are
+absent from a default build: 0x61 ART_TEST (`artprobe`), 0x63 LIBRARY_PREVIEW
+and 0x65 CARD_PREVIEW (`uiprobe`). They are screen probes for captures and
+change nothing.
+
 [UI] = blocks on an explicit user confirmation on the device screen, drawn
 over the library (the landing screen), which yields to the incoming APDU.
 `[n]` is the frame's data length; every one is inside the 255-byte limit, and
@@ -240,9 +251,10 @@ is rendered honestly (generative), never surfaced as an error.
 
 The app opens on the **library**: a list of the records the device holds, each
 row a decimated sleeve thumbnail, the title from the certificate, and a status
-line, over a "Quitter" footer that exits. Row status uses the "#N / M" family:
-a pressing row reads `#1 / 5`, and the master's own row reads
-`Your master · N of M left` (or `sold out`). The library runs an APDU-aware
+line, over a "Quitter" footer that exits. Row status uses the "#N of M" family:
+a pressing row reads `#1 of 5` (or `#1 of 5 - promised, reconnect XXXXXXXX`),
+and the master's own row reads `Master - N of M left`, or `Master - Sold out`.
+The library runs an APDU-aware
 event loop: it is the screen present when a ceremony begins, so it yields the
 instant a command arrives, lets the main loop serve it, and redraws from fresh
 NVM afterward. A ceremony therefore proceeds unchanged with the library on
@@ -256,34 +268,37 @@ Tapping a row opens the **record card**, a two-page generic review:
 - **Page 1 of 2 — the record card.** A large `#N` on the left, the 160px cover
   to its right with a short Cover Flow mirror reflection (the cover flipped,
   ordered-Bayer dithered from ~0.55 at the seam to 0, strict 1-bit), and the
-  album title in bold below, the block vertically centred. The number, cover and
-  reflection are composited in RAM at draw time; nothing extra is stored in NVM.
-  A master's card omits the `#N` (a plate is not a numbered copy). When no
-  verified sleeve is loaded, the generative label art stands in. The `< N of 2 >`
-  pager and "Back" sit in the footer.
-- **Page 2 of 2 — the back of the record.** A tag/value list: Copy (`#N of M`,
-  or `Master plate of M`), Artist, Album, and Edition ID (the first 8 hex of
-  `SHA256(albpub)`). The Edition ID row carries a **compiled** circled-i glyph
-  (`include_gif`, baked by build.rs — a runtime heap icon faults under PIC
-  relocation on this target); tapping the row opens the authenticity page.
-  **Four rows, always**, whatever the device holds: the list area is four
-  touchable bars tall and a fifth is drawn under the split footer, so the count
-  is fixed by the type of the array the rows are built into. Provenance
+  album title in bold below with the artist under it, the block vertically
+  centred. The number, cover and reflection are composited in RAM at draw time;
+  nothing extra is stored in NVM. A master's card shows `#0`, its own marker in
+  the same numbering as the copies it presses. When no verified sleeve is loaded,
+  the generative label art stands in. The `< N of 2 >` pager and "Back" sit in
+  the footer.
+- **Page 2 of 2 — the back of the record.** Four navigable rows, each a label
+  with its value inlined toward the right and a **compiled** chevron glyph
+  (`include_gif`, baked by build.rs, because a runtime heap icon faults under PIC
+  relocation on this target) that is the tap affordance into the row's own
+  sub-page: Number (`#N of M`, `#0 of M` for a master), Edition ID (the first 8
+  hex of `SHA256(albpub)`), Device ID (the first 8 hex of `SHA256(devpub)`), and
+  "Learn more". **Four rows, always**, whatever the device holds: the list area
+  is four touchable bars tall and a fifth is drawn under the split footer, so the
+  count is fixed by the type of the array the rows are built into. Provenance
   therefore lives on the **Device ID** page, beside the device that holds
   the record now: the one handover this device can prove, named by fingerprint,
   and the number of holders before it, carried with the copy and unproven. A
   count and not a list, because the trail is unbounded and the page is not.
 
+The sub-pages carry the explanations, one fact each: what the numbering means
+and that the counter is sealed in the chip; what the Edition ID is and to
+confirm it through the artist's own channels; who holds the record and where it
+came from. **Learn more** states what the device proves (genuine artwork from
+this edition, and that this device holds it) and what it cannot (that the album
+key is the real artist's), because a copycat could reuse the same artwork under
+a different Edition ID.
+
 A device that holds nothing but has given a copy away says so on the library
 empty state ("No records here / You gave your copy away") rather than showing
 the newcomer's invitation.
-
-The **authenticity** page states what the device proves (this is copy #N of a
-sealed edition of M, the artwork is genuine and unaltered, this device holds
-the key it is bound to) and what it cannot (that the album key belongs to the
-real artist), with
-the note to confirm the Edition ID on the artist's official channel, because a
-copycat could reuse the same artwork under a different Edition ID.
 
 The CUT confirmation names the artist: `Cut master of <title> by <artist>?`.
 
