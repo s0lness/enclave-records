@@ -70,9 +70,10 @@ device. C'est le sens de l'étape des 4 mots.
    ```
 
    Doit afficher `2 Flex vu(s) en HID`, et pour chacun `has_master: False`,
-   `has_pressing: False`. L'`empreinte` imprimée est exactement celle que
-   l'écran de A affichera au moment du press (`For device XXXXXXXX`): note
-   laquelle est `paths[1]`, c'est le futur destinataire B.
+   `has_pressing: False`. Le `Device ID` imprimé est exactement celui que
+   l'écran de A affichera au moment du press (`For device XXXXXXXX`), et celui
+   que chaque Flex montre lui-même (au verso de la fiche, ou sous le message
+   d'une library vide): note lequel est `paths[1]`, c'est le futur destinataire B.
 
    Si `1 Flex vu(s)`: relancer `attach-usb.ps1`, vérifier que le device est
    déverrouillé et l'app ouverte.
@@ -158,7 +159,7 @@ d'abord**:
 
 **À filmer**: les deux taps dans cet ordre, l'écran du donneur qui passe à
 `No records here` / « You gave your copy away. », et celui du receveur où la
-pochette apparaît. Puis la fiche du receveur, page 2, ligne `Collection ID`
+pochette apparaît. Puis la fiche du receveur, page 2, ligne `Device ID`
 (tapée): la sous-page `Where it came from` nomme l'appareil cédant
 (`XXXXXXXX, the one handover this device can prove.`). La provenance est là et
 pas sur la page 2: celle-ci tient quatre lignes, pas cinq.
@@ -168,7 +169,7 @@ pas sur la page 2: celle-ci tient quatre lignes, pas cinq.
 > (sa ligne library passe à `#1 of 5 - promised, reconnect XXXXXXXX`, qui nomme
 > le receveur engagé, et `INS_CHALLENGE` répond déjà `NoPressing`). Ce `XXXXXXXX`
 > est le même empreinte que l'écran de confirmation (`To device XXXXXXXX`) et que
-> le `Collection ID` de l'appareil concerné: c'est ce qui permet de retrouver
+> le `Device ID` de l'appareil concerné: c'est ce qui permet de retrouver
 > avec quel Flex terminer. Relancer `give.sh` sur les deux mêmes Flex termine la
 > cession, **sans redemander de confirmation au donneur**. L'effacement réel
 > n'a lieu qu'à la réception du reçu du destinataire.
@@ -202,7 +203,8 @@ défaut). Sur l'écran, un titre long se coupe en deux lignes.
 ### Avant tout
 
 Les deux Flex: `Enclave Records` / **No records yet** / « Cut a master or
-receive a pressing. » / `Quit`.
+receive a pressing. » / `Device ID XXXXXXXX` / `Quit`. Une library vide nomme
+l'appareil, seule façon d'identifier un Flex qui ne tient rien.
 
 ### Cut, sur A
 
@@ -249,7 +251,7 @@ For device DCFE1B7F.
 [ Cancel ]   [ Press this copy ]
 ```
 
-L'empreinte affichée est celle de B (celle donnée par `preflight.sh`).
+L'empreinte affichée est le `Device ID` de B (celui donné par `preflight.sh`).
 Après le tap, la library de A passe à **4 of 5 left to press**: le compteur a
 bougé dans le silicium.
 

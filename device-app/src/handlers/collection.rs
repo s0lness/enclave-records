@@ -52,9 +52,9 @@ fn edition_id(albpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, AppSW>
 }
 
 /// The first 8 hex chars of SHA256(devpub): the device's public identity, shown
-/// as "Collection ID" (the collection that physically holds this record). The
-/// same fingerprint a press is addressed to ("For device ...").
-fn collection_id(devpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, AppSW> {
+/// as "Device ID" (the device that physically holds this record). The same
+/// fingerprint a press is addressed to ("For device ...").
+fn device_id(devpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, AppSW> {
     let hash = crate::crypto::sha256(&[devpub])?;
     let mut fp = [0u8; 4];
     fp.copy_from_slice(&hash[..4]);
@@ -215,8 +215,8 @@ struct CardData {
     number: Option<u16>,
     edition_id: String,
     /// The fingerprint of the device holding this record, shown as the
-    /// "Collection ID" on the back of the card.
-    collection_id: String,
+    /// "Device ID" on the back of the card.
+    device_id: String,
     /// The album id, used to generate the fallback cover when no verified
     /// sleeve is stored.
     album_id: [u8; 32],
@@ -254,7 +254,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 edition: nvm.edition,
                 number: None,
                 edition_id: edition_id(&nvm.alb_pub)?,
-                collection_id: collection_id(&nvm.dev_pub)?,
+                device_id: device_id(&nvm.dev_pub)?,
                 album_id: id,
                 sleeve_verified: sleeve_verified(&sleeve_hash, crate::state::SLOT_MASTER),
                 slot: crate::state::SLOT_MASTER,
@@ -266,7 +266,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
             let album = parse_album_cert(&nvm.pressing_album_cert)?;
             let pressing = crate::certs::parse_pressing_cert(&nvm.pressing_cert, &album.albpub)?;
             let received_from = if nvm.has_from == 1 {
-                collection_id(&nvm.pressing_from)?
+                device_id(&nvm.pressing_from)?
             } else {
                 String::new()
             };
@@ -279,7 +279,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 edition: pressing.edition,
                 number: Some(pressing.number),
                 edition_id: edition_id(&album.albpub)?,
-                collection_id: collection_id(&nvm.dev_pub)?,
+                device_id: device_id(&nvm.dev_pub)?,
                 album_id: pressing.album_id,
                 sleeve_verified: sleeve_verified(&album.sleeve_hash, crate::state::SLOT_PRESSING),
                 slot: crate::state::SLOT_PRESSING,
@@ -296,16 +296,16 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
 enum Page {
     /// The cover, with the big `#N` numeral and the title + artist.
     Card,
-    /// The back-envelope info: the number, the Edition ID, the Collection ID,
-    /// and a "Learn more" row, each opening a sub-page.
+    /// The back-envelope info: the number, the Edition ID, the Device ID, and a
+    /// "Learn more" row, each opening a sub-page.
     Back,
     /// "#N of M", explained: what the numbering means and the sealed counter.
     InfoNumber,
     /// The Edition ID, explained: what it is and how to confirm it.
     InfoEdition,
-    /// The Collection ID, explained: the device that holds the record, and
-    /// where it came from before that.
-    InfoCollection,
+    /// The Device ID, explained: the device that holds the record, and where it
+    /// came from before that.
+    InfoDevice,
     /// The limits of the model: what the device can and cannot prove.
     LearnMore,
 }
@@ -328,7 +328,7 @@ fn pair(
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit, AppSW> {
     use crate::app_ui::library::{
-        pager_label, run_event_loop, Layout, ScreenArena, TOKEN_BACK, TOKEN_INFO_COLLECTION,
+        pager_label, run_event_loop, Layout, ScreenArena, TOKEN_BACK, TOKEN_INFO_DEVICE,
         TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER, TOKEN_LEARN_MORE, TOKEN_PAGER,
     };
     use ledger_secure_sdk_sys::nbgl_contentTagValue_t;
@@ -394,7 +394,7 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             let rows: [(String, u8); BACK_ROWS] = [
                 (row("Number", &number_line), TOKEN_INFO_NUMBER),
                 (row("Edition ID", &card.edition_id), TOKEN_INFO_EDITION),
-                (row("Collection ID", &card.collection_id), TOKEN_INFO_COLLECTION),
+                (row("Device ID", &card.device_id), TOKEN_INFO_DEVICE),
                 (String::from("Learn more"), TOKEN_LEARN_MORE),
             ];
             for (text, token) in rows {
@@ -448,12 +448,12 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             layout.tag_value_list(&pairs);
             layout.footer(cstr(String::from("Back")), TOKEN_BACK);
         }
-        Page::InfoCollection => {
-            layout.header(cstr(String::from("Collection ID")), core::ptr::null());
+        Page::InfoDevice => {
+            layout.header(cstr(String::from("Device ID")), core::ptr::null());
             pairs.push(pair(
-                cstr(card.collection_id.clone()),
+                cstr(card.device_id.clone()),
                 cstr(String::from(
-                    "The fingerprint of this device, the collection that holds the record.",
+                    "The fingerprint of this device, the one that physically holds the record.",
                 )),
             ));
             // Where the record came from, beside who holds it now: the two
@@ -541,7 +541,7 @@ pub fn show_record_card(kind: RecordKind) -> Result<(), AppSW> {
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 fn card_loop(card: &CardData) -> Result<(), AppSW> {
     use crate::app_ui::library::{
-        Exit, TOKEN_BACK, TOKEN_INFO_COLLECTION, TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER,
+        Exit, TOKEN_BACK, TOKEN_INFO_DEVICE, TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER,
         TOKEN_LEARN_MORE, TOKEN_PAGER,
     };
 
@@ -552,14 +552,14 @@ fn card_loop(card: &CardData) -> Result<(), AppSW> {
             Exit::Touched(TOKEN_BACK) => match page {
                 // Back from a sub-page returns to the back envelope; Back from
                 // the card or the back leaves for the library.
-                Page::InfoNumber | Page::InfoEdition | Page::InfoCollection | Page::LearnMore => {
+                Page::InfoNumber | Page::InfoEdition | Page::InfoDevice | Page::LearnMore => {
                     page = Page::Back
                 }
                 _ => return Ok(()),
             },
             Exit::Touched(TOKEN_INFO_NUMBER) => page = Page::InfoNumber,
             Exit::Touched(TOKEN_INFO_EDITION) => page = Page::InfoEdition,
-            Exit::Touched(TOKEN_INFO_COLLECTION) => page = Page::InfoCollection,
+            Exit::Touched(TOKEN_INFO_DEVICE) => page = Page::InfoDevice,
             Exit::Touched(TOKEN_LEARN_MORE) => page = Page::LearnMore,
             Exit::Touched(TOKEN_PAGER) => {
                 page = if page == Page::Card { Page::Back } else { Page::Card };
@@ -804,13 +804,13 @@ impl Library {
                 ("No records yet", "Cut a master or receive a pressing.")
             };
             // ...and it says who it is. A device holding a record shows its
-            // Collection ID on the back of the card, but an empty-handed one has
-            // no card to open, and that is exactly the device a giver has to
+            // Device ID on the back of the card, but an empty-handed one has no
+            // card to open, and that is exactly the device a giver has to
             // identify: a committed row says "reconnect XXXXXXXX", and matching
             // it against the candidate in front of you is otherwise impossible.
             layout.text(
                 cstr(String::from(head)),
-                cstr(format!("{}\n\nCollection ID {}", body, collection_id(&nvm.dev_pub)?)),
+                cstr(format!("{}\n\nDevice ID {}", body, device_id(&nvm.dev_pub)?)),
             );
         }
 
@@ -991,11 +991,11 @@ pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>,
         // number 0 renders the master (#0); any other renders that pressing.
         number: if number == 0 { None } else { Some(number) },
         edition_id: String::from("A1B2C3D4"),
-        collection_id: String::from("3FC2A9B1"),
+        device_id: String::from("3FC2A9B1"),
         album_id: [0x42u8; 32],
         sleeve_verified: false,
         slot: crate::state::SLOT_MASTER,
-        // A synthetic card is never a transfer, so its Collection ID page reads
+        // A synthetic card is never a transfer, so its Device ID page reads
         // as a copy that came straight from a press.
         received_from: String::new(),
         earlier: 0,

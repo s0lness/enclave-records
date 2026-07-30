@@ -186,7 +186,7 @@ had to be reconnected. Now:
   either way (find that device), and the row's job is to be actionable, not
   precise about internals. `GET_INFO` reports the two separately, because a
   relay offering a cancel does need to tell them apart;
-- a device holding nothing prints its own `Collection ID` under the empty state,
+- a device holding nothing prints its own `Device ID` under the empty state,
   so the device named by that row can actually be identified in a drawer of
   identical Flexes;
 - the empty state also distinguishes "No records yet" from "No records here /
@@ -194,7 +194,7 @@ had to be reconnected. Now:
 
 ### Provenance
 
-On the back of the record, beside `Collection ID` (the device holding it now):
+On the back of the record, beside `Device ID` (the device holding it now):
 
 - **the previous holder**, named by fingerprint. Exactly one hop, and it is the
   one hop that is *proven*: the giver signs a handover record naming both

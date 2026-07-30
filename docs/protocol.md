@@ -269,7 +269,7 @@ Tapping a row opens the **record card**, a two-page generic review:
   **Four rows, always**, whatever the device holds: the list area is four
   touchable bars tall and a fifth is drawn under the split footer, so the count
   is fixed by the type of the array the rows are built into. Provenance
-  therefore lives on the **Collection ID** page, beside the device that holds
+  therefore lives on the **Device ID** page, beside the device that holds
   the record now: the one handover this device can prove, named by fingerprint,
   and the number of holders before it, carried with the copy and unproven. A
   count and not a list, because the trail is unbounded and the page is not.
@@ -379,10 +379,10 @@ stays what it always was, the recipient's receipt.
 
 A committed row says "reconnect XXXXXXXX", so finishing an interrupted transfer
 means identifying one device among several. A device that holds a record shows
-its Collection ID on the back of the card, but the candidate is often a device
+its Device ID on the back of the card, but the candidate is often a device
 holding nothing, which has no card to open. So the library's empty state carries
-`Collection ID XXXXXXXX` under its message, in both its readings ("No records
-yet" and "You gave your copy away"). It is the same SHA256(devpub) fingerprint as
+`Device ID XXXXXXXX` under its message, in both its readings ("No records yet"
+and "You gave your copy away"). It is the same SHA256(devpub) fingerprint as
 everywhere else: nothing is stored and nothing is sent to display it.
 
 ### The receipt
@@ -433,7 +433,7 @@ the provenance the taker stores names the device it actually paired with.
   handover that ended. `XXXXXXXX` is the first 8 hex of `committed_to`, which is
   SHA256 of the recipient's devpub: the same fingerprint the offer was confirmed
   against ("To device XXXXXXXX") and the same one that device shows as its own
-  Collection ID, so no field is stored and no frame changes to display it.
+  Device ID, so no field is stored and no frame changes to display it.
 
 ## Updates and survivability
 

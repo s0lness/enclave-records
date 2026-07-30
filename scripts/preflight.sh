@@ -25,7 +25,8 @@ for i, p in enumerate(paths):
     print(f"    has_pressing : {info['has_pressing']}")
     if info["has_master"]:
         print(f"    master       : \"{info['title']}\", {info['counter']}/{info['edition']} restants")
-    # Même empreinte que l'écran du Flex ("For device XXXXXXXX"): SHA256(devpub)[:4].
+    # Même empreinte que l'écran du Flex ("Device ID", "For device XXXXXXXX"):
+    # SHA256(devpub)[:4].
     fp = hashlib.sha256(info["devpub"]).digest()[:4].hex().upper()
-    print(f"    empreinte    : {fp}")
+    print(f"    Device ID    : {fp}")
 EOF

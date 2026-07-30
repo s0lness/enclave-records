@@ -88,7 +88,7 @@ SW_BAD_CERT = "b103"
 
 # The back of the record, in order. Fixed: the page has room for four rows and
 # for no fifth, whatever the device holds.
-BACK_ROWS = ["Number", "Edition ID", "Collection ID", "Learn more"]
+BACK_ROWS = ["Number", "Edition ID", "Device ID", "Learn more"]
 
 
 @pytest.fixture
@@ -633,7 +633,7 @@ def test_an_empty_device_names_itself(two):
     its name. The empty shelf carries it instead."""
     a, _ = two
     assert a.dev.wait_for_text("No records yet"), a.dev.screen_texts()
-    assert a.dev.wait_for_text("Collection ID"), a.dev.screen_texts()
+    assert a.dev.wait_for_text("Device ID"), a.dev.screen_texts()
     assert a.dev.wait_for_text(fingerprint(a.get_info()["devpub"])), a.dev.screen_texts()
 
 
@@ -667,7 +667,7 @@ def test_the_previous_holder_is_named_beside_who_holds_it_now(two):
     press_one(a, b)
 
     back_of_record(b)
-    since = open_row(b, "Collection ID")
+    since = open_row(b, "Device ID")
     assert b.wait_for_text_since("Pressed onto this device", since), b.dev.screen_texts()[since:]
     b.tap_text("Back", since=since)
     b.tap_text("Back")
@@ -677,7 +677,7 @@ def test_the_previous_holder_is_named_beside_who_holds_it_now(two):
 
     assert b.dev.wait_for_text(TITLE), b.dev.screen_texts()
     back_of_record(b)
-    since = open_row(b, "Collection ID")
+    since = open_row(b, "Device ID")
     assert b.wait_for_text_since("the one handover", since), b.dev.screen_texts()[since:]
     assert b.wait_for_text_since(fingerprint(a.get_info()["devpub"]), since), (
         b.dev.screen_texts()[since:]
@@ -726,7 +726,7 @@ def test_a_long_history_does_not_grow_the_page_that_carries_it(two):
     assert row_labels(a.dev, since) == BACK_ROWS
     assert_page_fits(a.dev, since)
 
-    since = open_row(a, "Collection ID")
+    since = open_row(a, "Device ID")
     assert a.wait_for_text_since("Where it came from", since), a.dev.screen_texts()[since:]
     assert a.wait_for_text_since(f"{RING_MAX - 1} more", since), a.dev.screen_texts()[since:]
     assert_page_fits(a.dev, since)

@@ -344,7 +344,9 @@ pub fn handler_give_cancel(command: Command<'_>) -> Result<CommandResponse<'_>, 
 
     let mut fp = [0u8; 4];
     fp.copy_from_slice(&nvm.committed_to[..4]);
-    let message = format!("Take back the promise\nto {}?", fingerprint_str(&fp));
+    // Named the way every other screen names a device, so the fingerprint here
+    // reads as the same object as the "Device ID" the other device shows.
+    let message = format!("Take back the promise\nto device {}?", fingerprint_str(&fp));
     let comm = command.into_comm();
     let approved = crate::app_ui::menu::ceremony_choice().show(
         comm,

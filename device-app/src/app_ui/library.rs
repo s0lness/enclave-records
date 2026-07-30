@@ -379,7 +379,7 @@ pub const TOKEN_PRESSING: u8 = 1;
 /// clear of both the row range below and the control range above.
 pub const TOKEN_INFO_NUMBER: u8 = 240;
 pub const TOKEN_INFO_EDITION: u8 = 241;
-pub const TOKEN_INFO_COLLECTION: u8 = 242;
+pub const TOKEN_INFO_DEVICE: u8 = 242;
 pub const TOKEN_LEARN_MORE: u8 = 243;
 /// Control tokens, kept well clear of the row range.
 pub const TOKEN_INFO: u8 = 250;

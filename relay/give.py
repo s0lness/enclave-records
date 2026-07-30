@@ -140,8 +140,8 @@ def main():
 
     info_giver = giver.get_info()
     info_taker = taker.get_info()
-    # The same 8-hex identity the devices show ("To device ...", "Collection
-    # ID", and the recipient named on a committed row). Printed on every run
+    # The same 8-hex identity the devices show ("To device ...", "Device ID",
+    # and the recipient named on a committed row). Printed on every run
     # because finishing an interrupted give means finding the one device the
     # giver's row names, and a device holding nothing has no record card to
     # show its own.
