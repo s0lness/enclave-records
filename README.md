@@ -43,6 +43,15 @@ work ownable again, as a numbered object with real scarcity:
   like a record or a Game Boy cartridge. The cover art travels with the
   pressing, the previous holder is named beside the device that holds it now,
   and the copy can change hands any number of times without a ledger anywhere.
+- **The copies cannot be enumerated.** Nothing lists who holds them. The
+  artist's chip keeps the count and records the devices the first copies went
+  to; past that, a copy is unknown until its holder produces it, and then it
+  authenticates in seconds, offline. That is the record-shop bin: the rare
+  pressing is fun *because* nobody knew it was there, and when someone comes out
+  of the woodwork with a pristine #1 you can attest it on the spot. A copy does
+  carry a sleeve note of its own, naming the device that handed it over and
+  counting the holders before that. See [what a copy
+  reveals](docs/threat-model.md#what-a-copy-reveals).
 
 A working prototype of that idea, on hardware you can buy today.
 
@@ -295,8 +304,8 @@ it has no witness device (designed but not built, see below).
 [**docs/threat-model.md**](docs/threat-model.md) carries the case analysis: what
 each promise rests on, why a Ledger app cannot prove to a peer that it is a
 Ledger and what that costs, every way a copy can be lost with its window and its
-ordinary physical analogue, the interruption that costs nothing, what is out of
-scope, and the non-goals in full.
+ordinary physical analogue, the interruption that costs nothing, what a copy
+reveals when it is shown, what is out of scope, and the non-goals in full.
 
 ## Updates and survivability
 

@@ -120,6 +120,37 @@ mid-transfer. Re-run the ceremony with the same two devices and it completes, an
 the screen tells you which device to go and get. Nothing about an interrupted
 transfer costs the copy.
 
+## What a copy reveals
+
+There is no registry, so an edition's copies cannot be enumerated: nobody can
+list the holders, or learn that a given copy exists at all, until its holder
+produces it. The master's chip is the one exception, and a partial one. It holds
+the press counter, so the artist knows how many were pressed, and it logs the
+recipient fingerprints of the first eight pressings, which name the devices
+those copies were pressed *onto* rather than whoever holds them now (the Flex
+build has no screen that shows the log, and no command exports it).
+
+What a copy does reveal, it reveals to whoever is holding it:
+
+- **The number and the Edition ID**, public by design. `#N of M` and the
+  fingerprint of the album key are what a buyer checks against the artist's
+  channel.
+- **The previous holder**, named by fingerprint on the Device ID page and proven
+  by that device's signed handover record.
+- **How far the copy has travelled**: a count of the holders before that one,
+  from the unsigned ring that travels with the copy. The ring keeps 32
+  fingerprints and drops the oldest, so a much-handed copy understates.
+- **The two sides of a transfer learn each other.** The taker gets the giver's
+  fingerprint inside the MACed handover frame, and the giver confirms the
+  taker's on screen. A give that completes leaves the giver with a flag saying a
+  copy went out, and nothing naming where.
+- **A device on a cable answers `GET_INFO` and `GET_BUNDLE` to any host**, with
+  no confirmation screen, so physical possession is enough to read the
+  certificates, the title and the master's counter.
+
+A copy is therefore closer to a record with a name written in the sleeve than to
+a public ledger or to an anonymous token.
+
 ## Explicitly out of scope
 
 - **Breaking the secure element.** Extracting a key from the chip breaks
