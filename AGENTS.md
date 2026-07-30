@@ -92,7 +92,13 @@ value fingerprints a device's key, and the label has to say so.
   device that split it. Nor as an attestation: one chain on its own proves
   nothing, a clone's head being equally valid and grown from the same public
   root. It is comparative evidence, and the comparison is a verifier's job, off
-  the device. See docs/protocol.md, "The provenance chain", and
+  the device. What the screen carries is the head itself, as **eight words**
+  (its first 8 bytes through the 256-word SAS list, two to a line) on a
+  `History` sub-page under `Device ID`, for a pressing only: 64 bits is what
+  survives a forger grinding a fabricated history against a shown prefix, and a
+  master's head is the all-zero sentinel. The same rule renders off-device from
+  `GET_BUNDLE p1=2`, so both sides of a comparison derive the words instead of
+  trusting them. See docs/protocol.md, "The provenance chain", and
   docs/threat-model.md, "A lone chain proves nothing".
 - A copy is bound to a **bearer key**, not to a device, and a give is a **two-phase
   commit**: `GIVE_OFFER` atomically commits the copy to one named recipient (still
@@ -135,11 +141,12 @@ value fingerprints a device's key, and the label has to say so.
   so the old "the ceiling is at `data_size` 18944" was this same phenomenon seen
   from the other side. Which pair goes with which depends on the NVM structs of
   the day, so read both numbers off the build rather than inferring one from the
-  other: the current build reports `text` 74032 *with* `data_size` 18432. **The
+  other: the current build reports `text` 74544 *with* `data_size` 18432. **The
   74032..76080 edges were swept against the NVM structs that predate the
   provenance chain**, so treat them as a guide and not as measured for today's
-  layout; the only point verified against the current structs is the one the
-  build sits on (3x boot check, twice). The
+  layout; the points verified against the current structs are 74032 and 74544,
+  each 3x boot-checked and both at `data_size` 18432 (the history page cost one
+  512-byte `.rodata` step and moved no NVM struct at all). The
   failure is silent either way: the app installs, panics before its first APDU
   (`exiting_panic` -> `exit_app(0)`, which the Speculos log shows as
   `exit called (0)`) and answers nothing. Read `text` from the build output and

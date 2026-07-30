@@ -47,6 +47,8 @@ from presse_client import (  # noqa: E402
     finish_give,
     give_offer,
     give_stage,
+    head_words,
+    read_witness,
     split_sw,
     verify_chain,
     verify_possession,
@@ -201,6 +203,15 @@ def main():
     verify_possession(taker, pressing)
     print(f"GENUINE: pressing {result['number']} of {result['edition']}"
           f" of \"{result['title']}\", now held by the taker, possession proven live.")
+
+    # The head, and the same eight words the taker's History page draws. Printed
+    # from the witness this laptop just read, through this laptop's own copy of
+    # the rendering rule: the two surfaces agree because both derive them, not
+    # because either was told. Write them down -- comparing a copy against what
+    # somebody recorded is the whole use of a chain.
+    witness = read_witness(taker)
+    print(f"   history head {witness['chain'].hex()}  ({witness['hops']} hops)")
+    print(f"   as words:    {' '.join(head_words(witness['chain']))}")
 
 
 if __name__ == "__main__":

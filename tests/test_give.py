@@ -44,6 +44,7 @@ from presse_client import (
     INS_TAKE_RECEIPT,
     PUBKEY_LEN,
     Presse,
+    SAS_WORDS,
     SIG_MAX_LEN,
     SLOT_MASTER,
     SLOT_PRESSING,
@@ -57,6 +58,7 @@ from presse_client import (
     chain_genesis,
     chain_link,
     confirm_sas_both,
+    current_screen,
     demo_album_key,
     demo_bearer_key,
     ecdsa_sign,
@@ -67,6 +69,7 @@ from presse_client import (
     give_offer,
     give_stage,
     handover_message,
+    head_words,
     parse_pressing_cert,
     provision_pressing,
     read_art,
@@ -975,3 +978,169 @@ def test_a_truncated_history_is_taken_here_and_only_a_comparison_catches_it(two)
     assert witness["chain_prev"] == root
     assert true_head != root
     assert witness["chain_prev"] != true_head, "the truncation is undetectable"
+
+
+# --- the head, read out loud -------------------------------------------------
+#
+# A chain is comparative evidence, so it is worth nothing until a human can put
+# one copy's head beside what somebody else wrote down. The device renders the
+# head's first eight bytes as eight words: 64 bits, which is what survives a
+# forger grinding a fabricated history until it agrees with the original over
+# whatever prefix a screen shows. Thirty-two bits, the width of a Device ID,
+# does not.
+#
+# Every word asserted below is computed in this file: the head from the
+# certificate (SHA-256 re-implemented in presse_client) and the words from this
+# file's own copy of the list. Nothing here asks the device what it should be
+# showing, so a screen that agrees with these agrees with an independent
+# verifier, which is the only agreement worth having.
+
+
+def history_page(p: Presse) -> int:
+    """Card -> back envelope -> Device ID -> History. Returns the index the
+    history page's own elements start at."""
+    back_of_record(p)
+    open_row(p, "Device ID")
+    return open_row(p, "History")
+
+
+# The value column of a tag/value page, measured on the emulator: it starts at
+# x=32 and a full line runs to 448. A word line that reached past this would not
+# error, it would wrap, and a wrapped line is a fifth line on a page whose whole
+# claim is that it has four.
+VALUE_COLUMN_LEFT = 32
+VALUE_COLUMN_RIGHT = 448
+
+
+def word_events(p: Presse, since: int) -> list:
+    """The drawn elements whose text is nothing but entries of the list."""
+    return [
+        e
+        for e in current_screen(p.dev, since)
+        if e.get("text", "").split()
+        and all(w in SAS_WORDS for w in e["text"].replace("\n", " ").split())
+    ]
+
+
+def word_lines(p: Presse, since: int) -> list:
+    """The word lines drawn on the page, in order. OCR delivers a multi-line
+    value either whole or one event per line, so both shapes are flattened."""
+    lines = []
+    for e in word_events(p, since):
+        for line in e["text"].split("\n"):
+            if line.split():
+                lines.append(" ".join(line.split()))
+    return lines
+
+
+def two_per_line(words: list) -> list:
+    """The eight words as the page lays them out: four lines of two."""
+    return [" ".join(words[i : i + 2]) for i in range(0, len(words), 2)]
+
+
+def test_the_word_rule_is_a_lookup_on_the_first_eight_bytes_of_the_head():
+    """The rule an off-device verifier has to reproduce, pinned to literals.
+
+    Each of the first eight bytes indexes the 256-word list, in the head's own
+    order, and the ninth byte onward is not shown. Written out rather than
+    derived, so the rendering cannot quietly drift on both sides of the
+    comparison at once."""
+    assert head_words(bytes(range(8)) + bytes(24)) == [
+        "acrobat", "adrift", "almond", "amber", "anchor", "antique", "apple", "arena",
+    ]
+    assert head_words(bytes([255]) * 32) == ["walnut"] * 8
+    # The ninth byte onward is not shown, so it cannot change what is.
+    assert head_words(bytes(8) + bytes([7]) * 24) == ["acrobat"] * 8
+
+
+def test_the_history_page_shows_the_head_as_eight_words(two):
+    """A copy straight from the press sits at the root its own certificate
+    implies, so the words on its screen are computable here from the certificate
+    alone, with no reference to what the device rendered."""
+    a, b = two
+    cert = press_one(a, b)
+    album_id, number, _, _, _, _ = parse_pressing_cert(cert)
+    head = chain_genesis(album_id, number)
+    assert read_witness(b)["chain"] == head
+
+    since = history_page(b)
+    assert word_lines(b, since) == two_per_line(head_words(head)), (
+        b.dev.screen_texts()[since:]
+    )
+    assert_page_fits(b.dev, since)
+    # Each line inside the value column, which is the other half of "four
+    # lines": a pair too wide for it wraps, and a wrapped pair is a fifth.
+    for e in word_events(b, since):
+        assert e["x"] >= VALUE_COLUMN_LEFT and e["x"] + e["w"] <= VALUE_COLUMN_RIGHT, e
+
+
+def test_the_words_follow_the_head_when_the_copy_changes_hands(two):
+    """A transfer folds a link into the head, so the words change with it. The
+    new ones are replayed here from the root through both links the copy really
+    took: the screen has to agree with the fold, not merely with itself.
+
+    The copy goes out and comes back so the device read at the end holds a
+    pressing and nothing else, which is the only state where "open the record"
+    is unambiguous."""
+    a, b = two
+    cert = press_one(a, b)
+    album_id, number, _, _, _, _ = parse_pressing_cert(cert)
+    a_pub = a.get_info()["devpub"]
+    b_pub = b.get_info()["devpub"]
+    at_press = head_words(chain_genesis(album_id, number))
+
+    give_once(b, a)
+    out = read_witness(a)
+    give_once(a, b)
+    back = read_witness(b)
+
+    replayed = chain_genesis(album_id, number)
+    replayed = chain_link(replayed, b_pub, out["sig"], a_pub)
+    replayed = chain_link(replayed, a_pub, back["sig"], b_pub)
+    assert replayed == back["chain"], "the head is not the history it claims"
+    after = head_words(replayed)
+    assert after != at_press, "the head did not move across the transfers"
+
+    since = history_page(b)
+    assert word_lines(b, since) == two_per_line(after), b.dev.screen_texts()[since:]
+    assert_page_fits(b.dev, since)
+
+
+def test_the_history_page_is_one_height_however_far_the_copy_has_travelled(two):
+    """The page's shape cannot follow the copy's history, and this is the page
+    where that temptation is strongest: a list of hops is exactly what a reader
+    would like and exactly what runs off a screen that does not scroll.
+
+    The head is 32 bytes at one hop and at two hundred, and the words are a
+    fixed grid of four lines by two, so this page is the four lines a copy
+    straight from the press draws (asserted line for line above) at any distance
+    travelled. Two hundred is past the thirty-two the old display ring held."""
+    a, _ = two
+    giver = pair_as_giver(a)
+    bearer = stage_a_copy(a, giver, hops=200)
+    _, sw = a.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
+    assert sw == SW_OK
+    a.cmd(INS_TAKE_ACCEPT, sealed_frame(giver, bearer))
+    assert a.get_info()["has_pressing"] is True
+
+    since = history_page(a)
+    assert len(word_lines(a, since)) == 4, a.dev.screen_texts()[since:]
+    assert_page_fits(a.dev, since)
+
+
+def test_a_master_is_offered_no_history_to_compare(two):
+    """A plate is never handed on, so its chain stays at the all-zero sentinel
+    and eight words drawn from it would read the same on every device ever made.
+    A master's Device ID page therefore carries the plain Back footer and no way
+    into a history it does not have."""
+    a, _ = two
+    a.cut(TITLE, EDITION, ARTIST)
+    assert a.dev.wait_for_text(TITLE), a.dev.screen_texts()
+
+    back_of_record(a)
+    since = open_row(a, "Device ID")
+    assert a.wait_for_text_since("Cut on this device", since), a.dev.screen_texts()[since:]
+    assert not any(
+        "History" in e.get("text", "") for e in current_screen(a.dev, since)
+    ), a.dev.screen_texts()[since:]
+    assert_page_fits(a.dev, since)

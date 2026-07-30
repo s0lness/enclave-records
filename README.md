@@ -303,8 +303,17 @@ attribution, not prevention, and the whole reasoning is in
 One chain shown on its own settles nothing in either direction: a clone's head is
 equally valid, equally signed, and grows from the same public root. The chain is
 comparative evidence, and [the three things a holder does with
-one](docs/threat-model.md#what-a-holder-does-with-a-chain) all happen off the
-device.
+one](docs/threat-model.md#what-a-holder-does-with-a-chain) are a verifier's work,
+off the device.
+
+What the device does carry is the head itself, on a `History` sub-page of its
+own behind `Device ID`: its first 64 bits as **eight words** from the same list
+the pairing uses. Sixty-four bits because a forger fabricating a history can
+grind it offline until his head matches over whatever prefix a screen shows, and
+32 bits (the width of a `Device ID`) does not survive that. Read them against
+what somebody wrote down the last time they saw the copy; a verifier holding the
+32-byte head from `GET_BUNDLE p1=2` renders the same eight, by the rule in
+[docs/protocol.md](docs/protocol.md#the-provenance-chain).
 
 ## Threat model
 
@@ -433,7 +442,7 @@ not optional on any platform. Then:
 
 ```
 scripts/build.sh        # cargo ledger build flex, this checkout
-scripts/test.sh         # 68 tests, one or two emulated Flex
+scripts/test.sh         # 73 tests, one or two emulated Flex
 scripts/rehearse-emu.sh --auto    # cut, pair, press, verify on two emulators
 scripts/emu-up.sh       # two persistent emulators (:5001, :5002)
 scripts/cockpit.sh      # both screens + the APDU wire on :5050
@@ -476,9 +485,10 @@ Everything above except *Designed but not built* and the non-goals listed in
 [docs/threat-model.md](docs/threat-model.md):
 cut, pair, press, offline verify, give (three-state commitment, cancel, resume),
 sleeve art sealed into the album certificate, the library, the record card and
-the four sub-pages behind it (the number, the Edition ID, the Device ID with the
-provenance on it, and Learn more). 68 tests over one or two emulated Flex, and
-the ceremony filmed on two physical ones.
+the sub-pages behind it (the number, the Edition ID, the Device ID with the
+provenance on it, the History that reads the chain head as eight words, and
+Learn more). 73 tests over one or two emulated Flex, and the ceremony filmed on
+two physical ones.
 
 Not shipping, by decision: remote attestation, any backup, the witness, and the
 board of witnesses.

@@ -310,6 +310,16 @@ et `Back` en pied de page):
 après une cession, voir §2c) et `Learn more`, qui dit ce que l'appareil prouve et
 ce qu'il ne prouve pas.
 
+> **Pas sur le build flashé, reflash requis.** Sur une copie (jamais sur un
+> master), le pied de page de `Device ID` est coupé en deux: `Back` à gauche,
+> `History` à droite. `History` ouvre la tête de chaîne en **huit mots** de la
+> liste SAS, quatre lignes de deux, au-dessus de « Compare these with the words
+> recorded for this copy elsewhere. » Le terminal imprime les mêmes huit mots à
+> la fin de `give.sh`, à côté de la tête en hexadécimal: les deux surfaces les
+> dérivent de la même règle (`docs/protocol.md`, *Reading the head aloud*). À
+> filmer une fois les Flex reflashés, et dans le même plan que le terminal: les
+> mots à l'écran et les mots au terminal dans la même image.
+
 ### Verify
 
 **À filmer**: le terminal, ligne `GENUINE: …`, wifi coupé visible à l'image.

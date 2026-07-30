@@ -175,6 +175,31 @@ certificates it is checkable end to end: the signature verifies over
 must show the genesis its own certificate implies. `hops` is display only and
 saturates at 255; the head does not saturate and does not forget.
 
+**Reading the head aloud.** A head is evidence only once two people can compare
+one copy against what somebody else recorded, so the head has a canonical
+spoken form and both sides derive it the same way:
+
+```
+head[0..8]  ->  WORDS[head[k]] for k = 0..7      (the 256-word SAS list)
+rendered as four lines of two words, in that order
+```
+
+The first eight bytes, in the order the head stores them, one word per byte:
+64 bits. That width is an adversarial choice rather than a cosmetic one. A
+forger fabricating a clone's history invents every key in it, so he can grind
+links offline until his head agrees with the original's over whatever prefix a
+screen shows; 32 bits, the width of a Device ID, falls to that, and 64 does not.
+Words rather than the sixteen equivalent hex characters because words are what
+humans actually compare, which is why the pairing renders words too.
+
+The device shows them on the record card's History page (Device ID, then
+History), for a pressing only: a master is never handed on, so its head stays at
+the all-zero sentinel and would read the same on every device in existence. Any
+verifier reads the full 32-byte head from `GET_BUNDLE p1=2` and renders the same
+eight words from the same rule; `tests/presse_client.py` (`SAS_WORDS`,
+`head_words`) is one such implementation, and `relay/give.py` prints them beside
+the hex head at the end of a transfer.
+
 ## Pairing (commit-then-reveal ECDH, 4-word SAS)
 
 ```
@@ -346,7 +371,7 @@ and does not repaint per chunk.
 
 Tapping a row opens the **record card**, a two-page generic review:
 
-- **Page 1 of 2 — the record card.** A large `#N` on the left, the 160px cover
+- **Page 1 of 2, the record card.** A large `#N` on the left, the 160px cover
   to its right with a short Cover Flow mirror reflection (the cover flipped,
   ordered-Bayer dithered from ~0.55 at the seam to 0, strict 1-bit), and the
   album title in bold below with the artist under it, the block vertically
@@ -355,7 +380,7 @@ Tapping a row opens the **record card**, a two-page generic review:
   the same numbering as the copies it presses. When no verified sleeve is loaded,
   the generative label art stands in. The `< N of 2 >` pager and "Back" sit in
   the footer.
-- **Page 2 of 2 — the back of the record.** Four navigable rows, each a label
+- **Page 2 of 2, the back of the record.** Four navigable rows, each a label
   with its value inlined toward the right and a **compiled** chevron glyph
   (`include_gif`, baked by build.rs, because a runtime heap icon faults under PIC
   relocation on this target) that is the tap affordance into the row's own
@@ -377,6 +402,16 @@ came from. **Learn more** states what the device proves (genuine artwork from
 this edition, and that this device holds it) and what it cannot (that the album
 key is the real artist's), because a copycat could reuse the same artwork under
 a different Edition ID.
+
+One page deeper, the **History** page, reached from the right half of the Device
+ID page's split footer and offered for a pressing only: the chain head as eight
+words, four lines of two, over one line saying to compare them with what was
+recorded for the copy elsewhere (see **Reading the head aloud**). It is its own
+page and not a third pair on the Device ID page, because that page's list
+already ends at the last line it can render, and eight words wrap. Its own
+height is fixed for the same reason the back of the record is: constant strings
+and a fixed grid, so the page measures the same at one hop as at two hundred,
+which `assert_page_fits` checks at both.
 
 A device that holds nothing but has given a copy away says so on the library
 empty state ("No records here / You gave your copy away") rather than showing
@@ -508,8 +543,8 @@ incoming copy and NVM, and it re-runs every check regardless.
 Refused unless **all** of: the album cert parses and self-verifies; the pressing
 cert verifies under the album key; `album_id == SHA256(albpub)`; the editions
 match; the handover signature verifies under the giver public key travelling in
-the same MACed payload; this device holds no pressing already; and — at accept,
-where the key finally arrives — the public point of the received scalar equals
+the same MACed payload; this device holds no pressing already; and, at accept,
+where the key finally arrives, the public point of the received scalar equals
 the certificate's `holderpub`. Each fails closed.
 
 The derived-key check is what stops a lying relay: it can substitute a scalar,

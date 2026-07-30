@@ -2,6 +2,9 @@ use crate::certs::parse_album_cert;
 use crate::handlers::press::fingerprint_str;
 use crate::state::Store;
 use crate::AppSW;
+
+#[cfg(any(target_os = "stax", target_os = "flex"))]
+use crate::wordlist::{head_words, HEAD_WORDS};
 use alloc::ffi::CString;
 use alloc::format;
 use alloc::string::String;
@@ -236,6 +239,14 @@ struct CardData {
     /// screen that eventually runs off its bottom edge. The count states the
     /// same fact in a fixed number of characters.
     earlier: u8,
+    /// The first [`HEAD_WORDS`] bytes of the provenance chain head, which the
+    /// history page renders as words.
+    ///
+    /// `None` for a master, and the history page is not offered for one: a
+    /// plate is never handed on, so its head stays at the all-zero sentinel and
+    /// eight words derived from it would read identically on every device in
+    /// existence, which is worse than showing nothing.
+    history: Option<[u8; HEAD_WORDS]>,
 }
 
 #[cfg(any(target_os = "stax", target_os = "flex"))]
@@ -260,6 +271,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 slot: crate::state::SLOT_MASTER,
                 received_from: String::new(),
                 earlier: 0,
+                history: None,
             }))
         }
         RecordKind::Pressing if nvm.has_pressing == 1 => {
@@ -273,6 +285,8 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
             // The newest hop is the device the provenance names; only what lies
             // behind it is "earlier".
             let earlier = nvm.hops.saturating_sub(1);
+            let mut history = [0u8; HEAD_WORDS];
+            history.copy_from_slice(&nvm.chain[..HEAD_WORDS]);
             Ok(Some(CardData {
                 title: String::from(title_str(&album.title, album.title_len)?),
                 artist: String::from(title_str(&album.artist, album.artist_len)?),
@@ -285,6 +299,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 slot: crate::state::SLOT_PRESSING,
                 received_from,
                 earlier,
+                history: Some(history),
             }))
         }
         _ => Ok(None),
@@ -306,6 +321,9 @@ enum Page {
     /// The Device ID, explained: the device that holds the record, and where it
     /// came from before that.
     InfoDevice,
+    /// The provenance head as eight words: the copy's whole history in a form
+    /// two people can read to each other.
+    InfoHistory,
     /// The limits of the model: what the device can and cannot prove.
     LearnMore,
 }
@@ -329,7 +347,7 @@ fn pair(
 fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit, AppSW> {
     use crate::app_ui::library::{
         pager_label, run_event_loop, Layout, ScreenArena, TOKEN_BACK, TOKEN_INFO_DEVICE,
-        TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER, TOKEN_LEARN_MORE, TOKEN_PAGER,
+        TOKEN_INFO_EDITION, TOKEN_INFO_HISTORY, TOKEN_INFO_NUMBER, TOKEN_LEARN_MORE, TOKEN_PAGER,
     };
     use ledger_secure_sdk_sys::nbgl_contentTagValue_t;
 
@@ -482,6 +500,51 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             }
             pairs.push(pair(cstr(String::from("Where it came from")), cstr(origin)));
             layout.tag_value_list(&pairs);
+            // The way into the history, in the footer rather than as a third
+            // pair. The list above is already at the last line this page can
+            // render, and the footer's bar is drawn whatever is written on it,
+            // so a labelled action there costs the page nothing. A master gets
+            // the plain "Back": it has no history to compare.
+            match card.history {
+                Some(_) => layout.split_footer(
+                    cstr(String::from("Back")),
+                    TOKEN_BACK,
+                    cstr(String::from("History")),
+                    TOKEN_INFO_HISTORY,
+                ),
+                None => layout.footer(cstr(String::from("Back")), TOKEN_BACK),
+            }
+        }
+        Page::InfoHistory => {
+            // The head of the provenance chain, rendered so two people can
+            // check one copy against what someone wrote down about it. Eight
+            // words is 64 bits, which is what survives a forger grinding a
+            // fabricated history against the prefix a screen shows; the whole
+            // reasoning sits on `HEAD_WORDS`.
+            //
+            // Its height is fixed by construction, and measured: the value
+            // column is 416px wide from x=32, and the page draws the tag at
+            // y=120, the four word lines at 160/196/232/268, the second tag at
+            // 328 and its three lines at 368/404/440, so the last line ends at
+            // 476 against a footer rule at 504. Both values are constants and
+            // the words are a fixed grid rather than a line per hop, so the
+            // page measures the same at one hop as at two hundred. Two words to
+            // a line and not three: a long pair renders at 307px inside that
+            // 416px column while three words pass it, and a wrapped line would
+            // put the page's height back under the head's control.
+            layout.header(cstr(String::from("History")), core::ptr::null());
+            let head = card.history.unwrap_or([0u8; HEAD_WORDS]);
+            pairs.push(pair(
+                cstr(String::from("This copy's history")),
+                cstr(head_words(&head)),
+            ));
+            pairs.push(pair(
+                cstr(String::from("How to use it")),
+                cstr(String::from(
+                    "Compare these with the words recorded for this copy elsewhere.",
+                )),
+            ));
+            layout.tag_value_list(&pairs);
             layout.footer(cstr(String::from("Back")), TOKEN_BACK);
         }
         Page::LearnMore => {
@@ -541,8 +604,8 @@ pub fn show_record_card(kind: RecordKind) -> Result<(), AppSW> {
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 fn card_loop(card: &CardData) -> Result<(), AppSW> {
     use crate::app_ui::library::{
-        Exit, TOKEN_BACK, TOKEN_INFO_DEVICE, TOKEN_INFO_EDITION, TOKEN_INFO_NUMBER,
-        TOKEN_LEARN_MORE, TOKEN_PAGER,
+        Exit, TOKEN_BACK, TOKEN_INFO_DEVICE, TOKEN_INFO_EDITION, TOKEN_INFO_HISTORY,
+        TOKEN_INFO_NUMBER, TOKEN_LEARN_MORE, TOKEN_PAGER,
     };
 
     let mut page = Page::Card;
@@ -550,8 +613,10 @@ fn card_loop(card: &CardData) -> Result<(), AppSW> {
         match draw_page(card, page)? {
             Exit::Apdu => return Ok(()),
             Exit::Touched(TOKEN_BACK) => match page {
-                // Back from a sub-page returns to the back envelope; Back from
-                // the card or the back leaves for the library.
+                // Back retraces the way in: the history sits one level under
+                // the Device ID page, every other sub-page under the back
+                // envelope, and the card and the back leave for the library.
+                Page::InfoHistory => page = Page::InfoDevice,
                 Page::InfoNumber | Page::InfoEdition | Page::InfoDevice | Page::LearnMore => {
                     page = Page::Back
                 }
@@ -560,6 +625,7 @@ fn card_loop(card: &CardData) -> Result<(), AppSW> {
             Exit::Touched(TOKEN_INFO_NUMBER) => page = Page::InfoNumber,
             Exit::Touched(TOKEN_INFO_EDITION) => page = Page::InfoEdition,
             Exit::Touched(TOKEN_INFO_DEVICE) => page = Page::InfoDevice,
+            Exit::Touched(TOKEN_INFO_HISTORY) => page = Page::InfoHistory,
             Exit::Touched(TOKEN_LEARN_MORE) => page = Page::LearnMore,
             Exit::Touched(TOKEN_PAGER) => {
                 page = if page == Page::Card { Page::Back } else { Page::Card };
@@ -999,6 +1065,9 @@ pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>,
         // as a copy that came straight from a press.
         received_from: String::new(),
         earlier: 0,
+        // A fixed head, so the history page captures the same eight words on
+        // every run: the probe exists to film a layout, not to state a fact.
+        history: Some([0x2A, 0x91, 0x07, 0xC4, 0x6B, 0xFE, 0x35, 0x80]),
     };
     card_loop(&card)?;
 

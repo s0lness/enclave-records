@@ -121,7 +121,10 @@ def split_sw(resp_hex: str):
 HEADER_TEXT_Y = 30
 FOOTER_RULE_Y = 504
 FOOTER_LABEL_Y = 534
-FOOTER_LABELS = ("Back", "Quit")
+# Every label a footer bar can carry: the single-action footers, and the right
+# half of a split footer ("History" on the Device ID page; the record card's
+# "< 1 of 2 >" pager is matched separately, on its " of ").
+FOOTER_LABELS = ("Back", "Quit", "History")
 
 
 def current_screen(dev, since: int = 0) -> list:
@@ -519,6 +522,76 @@ def chain_link(prev: bytes, giverpub: bytes, sig: bytes, takerpub: bytes) -> byt
         + sig.ljust(SIG_MAX_LEN, b"\x00")
         + takerpub
     ).digest()
+
+
+# --- rendering a chain head as words -----------------------------------------
+#
+# The device shows the head's first HEAD_WORDS bytes as words so a holder can
+# read them against something a third party wrote down. The other side of that
+# comparison is off-device by definition, so the list and the rule live here
+# too, re-implemented rather than shared: this is the copy an independent
+# verifier would write from docs/protocol.md, and it is what the tests check the
+# screen against.
+
+HEAD_WORDS = 8
+
+SAS_WORDS = [
+    "acrobat", "adrift", "almond", "amber", "anchor", "antique",
+    "apple", "arena", "artist", "asteroid", "atlas", "autumn",
+    "avocado", "azure", "bagpipe", "bamboo", "banjo", "barbecue",
+    "beacon", "bedrock", "beehive", "bicycle", "billiard", "bison",
+    "blizzard", "blossom", "bluebird", "bonfire", "bookshelf", "breeze",
+    "brioche", "bronze", "bubble", "bucket", "butter", "cabaret",
+    "cactus", "camera", "canyon", "caramel", "caravan", "carnival",
+    "cascade", "castle", "cavern", "cello", "chapel", "checkers",
+    "cherry", "chimney", "chorus", "cinema", "citrus", "clover",
+    "cobalt", "coconut", "comet", "compass", "concert", "confetti",
+    "copper", "coral", "cottage", "cricket", "crystal", "cyclone",
+    "daisy", "dolphin", "domino", "dragon", "drizzle", "drumbeat",
+    "dungeon", "eagle", "echo", "eclipse", "ember", "emerald",
+    "engine", "falcon", "feather", "fiddle", "firefly", "flannel",
+    "flamingo", "fortune", "fossil", "fountain", "freckle", "frontier",
+    "galaxy", "garden", "gazelle", "geyser", "ginger", "glacier",
+    "glitter", "goggles", "gondola", "granite", "grotto", "guitar",
+    "hammock", "harbor", "harvest", "hazelnut", "helmet", "hexagon",
+    "hickory", "horizon", "hummingbird", "iceberg", "igloo", "indigo",
+    "island", "ivory", "jackal", "jasmine", "jigsaw", "jubilee",
+    "juniper", "kayak", "kernel", "kettle", "kiwi", "lagoon",
+    "lantern", "lavender", "lemonade", "leopard", "lighthouse", "lilac",
+    "lobster", "locket", "lullaby", "magnet", "mango", "marble",
+    "meadow", "melon", "meteor", "mineral", "mirror", "mosaic",
+    "mountain", "muffin", "mustang", "nebula", "nectar", "noodle",
+    "nugget", "nutmeg", "oasis", "obsidian", "octopus", "olive",
+    "onyx", "opera", "orbit", "orchard", "organ", "otter",
+    "oyster", "paddle", "pagoda", "panther", "papaya", "parade",
+    "parasol", "peacock", "pebble", "pelican", "pencil", "penguin",
+    "pepper", "petal", "phantom", "picnic", "pigeon", "pillow",
+    "pinwheel", "pirate", "pistachio", "planet", "plaza", "polka",
+    "pond", "poppy", "prairie", "pretzel", "prism", "pudding",
+    "puffin", "pyramid", "quartz", "quiver", "raccoon", "radish",
+    "rainbow", "raspberry", "raven", "reindeer", "ribbon", "riddle",
+    "ripple", "rocket", "rooster", "rosemary", "ruby", "saffron",
+    "sailboat", "sapphire", "sardine", "satchel", "seahorse", "shadow",
+    "shamrock", "sherbet", "silver", "skylark", "sleigh", "snowflake",
+    "sonnet", "sparrow", "sphinx", "spiral", "sprout", "squirrel",
+    "stadium", "stallion", "starling", "sundial", "sunflower", "syrup",
+    "tadpole", "tangerine", "tavern", "temple", "thimble", "thunder",
+    "tiger", "timber", "toffee", "topaz", "trumpet", "tulip",
+    "tundra", "turquoise", "twilight", "umbrella", "unicorn", "velvet",
+    "violet", "volcano", "waffle", "walnut",
+]
+assert len(SAS_WORDS) == 256
+
+
+def head_words(head: bytes) -> list:
+    """The eight words a chain head renders as: each of the first eight bytes
+    indexes the list, in the head's own order.
+
+    Eight words is 64 bits, which is the width that survives a forger grinding a
+    fabricated history until its head agrees with the original's over whatever a
+    screen shows. See docs/protocol.md, "Reading the head aloud"."""
+    assert len(head) >= HEAD_WORDS, len(head)
+    return [SAS_WORDS[b] for b in head[:HEAD_WORDS]]
 
 
 def read_witness(presse: "Presse") -> dict:

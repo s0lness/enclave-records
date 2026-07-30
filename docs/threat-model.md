@@ -133,13 +133,14 @@ a painting's provenance from the painting.
 
 Three operations, each with a place it belongs.
 
-**Compare two copies claiming the same number.** Two heads, one comparison.
-Identical heads with both devices answering CHALLENGE is duplication proven: one
-history, two holders. Divergent heads say the lineages split, and the hop where
-they split is found by walking the witnesses back from each side (`GET_BUNDLE
-p1=2` on every device that held the copy). Where the two witnesses already share
-`chain_prev`, the split is the last hop and both branches carry one device's
-signature.
+**Compare two copies claiming the same number.** Two heads, one comparison, and
+each device renders its own as eight words on the History page so the comparison
+can happen out loud. Identical heads with both devices answering CHALLENGE is
+duplication proven: one history, two holders. Divergent heads say the lineages
+split, and the hop where they split is found by walking the witnesses back from
+each side (`GET_BUNDLE p1=2` on every device that held the copy). Where the two
+witnesses already share `chain_prev`, the split is the last hop and both
+branches carry one device's signature.
 
 **Record what you saw.** A buyer, a gallery or a shop keeps the 204-byte witness
 it read at the moment of a transaction. The registry is the sum of those records,
@@ -154,17 +155,39 @@ TAKE and the taker increments it, so it is each giver's claim in turn.
 **Where this belongs.** The device holds and proves; comparing is a verifier's
 job. `GET_BUNDLE p1=2` answers any host with no confirmation screen, which is
 what makes all three possible off-device. Chain forensics on a 480x600 screen
-that does not scroll would be the wrong thing to build.
+that does not scroll would be the wrong thing to build. What the screen does
+carry is the head itself, as eight words, because the first of the three
+operations is two people reading to each other and neither of them is holding a
+laptop.
 
-**Open: how much of the head to show.** No screen displays the head today; the
-Device ID page carries the previous holder's fingerprint and a count. A human
-comparison needs the head rendered, and its length is an adversarial choice.
-Eight hex characters is 32 bits, and a forger invents every key in its clone's
-fabricated history, so it can grind links offline until the clone's head agrees
-with the original's over those 32 bits, at which point the two read alike to a
-human. Sixteen characters, or eight words from the 256-word SAS list, is what
-survives someone with an incentive to lie, at the price of a string nobody
-compares willingly. Not decided.
+**Decided: eight words of the head, on a page of their own.** How much of the
+head a screen shows is an adversarial choice, because a forger invents every key
+in his clone's fabricated history and can therefore grind links offline until
+the clone's head agrees with the original's over whatever prefix is displayed.
+Eight hex characters, the width of a Device ID, is 32 bits and falls to that
+grind in minutes, at which point the two copies read alike to a human. **The
+device renders the head's first eight bytes as eight words from the 256-word SAS
+list**: 64 bits, the same as sixteen hex characters, and past the reach of an
+offline grind. Words rather than hex because words are what people actually
+compare, which is why the pairing renders words and not a digest, and because
+reading them to each other is a ritual this object already has.
+
+The derivation is in [protocol.md](protocol.md#the-provenance-chain), byte for
+byte, so an independent verifier holding the 32-byte head from `GET_BUNDLE p1=2`
+renders the same eight words. That matters more than the on-device page does:
+the comparison is between a copy in someone's hand and a witness somebody else
+wrote down, and only one of those two sides is a device.
+
+They live on a sub-page of their own, reached from the Device ID page, for a
+reason that is structural rather than editorial. Every page here is fixed
+height, and eight words wrap; a block whose height follows what the device holds
+is the bug that puts a row under the footer, or past the bottom of the screen,
+where the draw faults outright. So the words are a fixed grid of four lines by
+two, the page is two tag/value pairs like the one it hangs off, and
+`assert_page_fits` covers it at a fresh press and at two hundred hops. A master
+is offered no such page: it is never handed on, its head stays at the all-zero
+sentinel, and eight words derived from that would read identically on every
+device ever made.
 
 ## Why there is no attestation, and what that costs
 
@@ -255,8 +278,11 @@ What a copy does reveal, it reveals to whoever is holding it:
 - **How far the copy has travelled**: a count of the holders before that one.
   The count is display only and saturates at 255; the chain head behind it is a
   32-byte commitment to every hop, in order, and forgets nothing however far the
-  copy has gone. The names of the earlier holders are *not* revealed: a digest is
-  not a roll, and only someone already holding a link can check it against one.
+  copy has gone. The head's first 64 bits are shown as eight words on the
+  History page, and the whole of it to any host over `GET_BUNDLE p1=2`, so a
+  holder can be compared against a witness. The names of the earlier holders are
+  *not* revealed: a digest is not a roll, and only someone already holding a
+  link can check it against one.
 - **The two sides of a transfer learn each other.** The taker gets the giver's
   fingerprint inside the MACed handover frame, and the giver confirms the
   taker's on screen. A give that completes leaves the giver with a flag saying a
