@@ -1,27 +1,28 @@
 # Enclave Records
 
-![Enclave Records demo](docs/demo.gif)
+*An artist cuts a master, two Ledger Flex pair by comparing four words, a
+numbered copy is pressed onto the receiver, and anyone verifies it offline.*
 
-*An artist cuts a master, two Ledger Flex pair by comparing four words, a numbered copy is pressed onto the receiver, and anyone verifies it offline.*
-▶ [Watch the video (pausable)](docs/demo.mp4)
-
-<!-- Maintainer: to get an inline HTML5 player with play/pause/scrub controls,
-     open this README in the github.com editor and DRAG docs/demo.mp4 into it;
-     GitHub uploads it and rewrites the link as an embedded player. A committed
-     mp4 referenced by path (as above) renders only as a download link. The GIF
-     stays for zero-click inline autoplay. -->
+<!-- Maintainer: the ceremony video goes HERE, and it has to be inserted by hand.
+     Open this README in the github.com editor and DRAG the mp4 into this spot:
+     GitHub uploads it and writes an inline player with play/pause/scrub. An mp4
+     committed to the repo and referenced by path renders only as a download
+     link, which is why no link is left here. docs/demo.mp4 is the film of the
+     Lot 1 ceremony and predates the current screens (the Device ID page, the
+     four-row back of the card, provenance, Learn more), so re-record with
+     scripts/record-demo.sh rather than posting it as it stands. -->
 
 Finite editions of digital works, enforced by silicon. An artist device "cuts
 a master" of an album (edition size and press counter captive in a secure
 element), then "presses" numbered copies onto other devices through an
-untrusted relay. A copy is bound to a **bearer key**, a secret that lives in one
-secure element at a time, so it can be handed on again and again, and at no
-moment does it exist in two places. Anyone can verify a copy offline:
+untrusted relay. A copy is bound to a **bearer key**, a secret that moves from
+one secure element to the next, so it can be handed on again and again and is
+never usable in two places at once. Anyone can verify a copy offline:
 certificate chain + live challenge-response, no server, no chain, no trust in
 the middleman.
 
-Runs on two Ledger Flex (or two emulated ones: everything below works with
-zero hardware).
+Runs on two Ledger Flex, or on two emulated ones: the whole ceremony runs on
+Speculos, which is how the test suite checks it.
 
 ## Why this is cool
 
@@ -39,14 +40,15 @@ work ownable again, as a numbered object with real scarcity:
   nothing to shut down, nothing that phones home.
 - **It behaves like an object.** Hand it over and it is *gone from your side*,
   like a record or a Game Boy cartridge. The cover art travels with the
-  pressing, the previous holder is named on the back of the card, and the copy
-  can change hands any number of times without a ledger anywhere.
+  pressing, the previous holder is named beside the device that holds it now,
+  and the copy can change hands any number of times without a ledger anywhere.
 
 A working prototype of that idea, on hardware you can buy today.
 
 ## What a copy actually is
 
-One secp256k1 scalar, the **bearer key**, plus two certificates that name it.
+One secp256k1 scalar, the **bearer key**, plus the two certificates that make it
+number N of an edition of M.
 
 The master mints a fresh bearer key at each press, signs "copy N of M is bound
 to this public key" with the album key, sends the private half to the recipient
@@ -59,8 +61,7 @@ That one choice is what the rest of the design follows from:
 
 - **A copy is transferable without limit.** Handing it on is sending the scalar
   and forgetting it. It costs no storage, so there is no cap on the number of
-  hands. (A chain of signed delegations, the obvious alternative, grows by one
-  link per transfer and runs out of certificate room around sixteen.)
+  hands.
 - **The album key signs once and is then irrelevant to that copy.** The artist's
   master can be destroyed and the copies keep verifying.
 - **The proof follows the key, not the hardware.** Which is also the price:
@@ -181,31 +182,20 @@ sequenceDiagram
     Note over CH: GENUINE, 1 of 5, previous holder 3FC2A9B1, proven
 ```
 
-```mermaid
-flowchart LR
-    AC["AlbumCert: album key, edition size, sleeve hash"]
-    PC["PressingCert: number N of M, bound to a bearer key"]
-    DEV["the holder proves it owns the bearer key, live"]
-    NEXT["give: the key moves to one named recipient, and only there"]
-    PLATES["lose the master, plates destroyed"]
-    AC -->|signs| PC
-    PC -->|challenge-response| DEV
-    DEV -->|ceremony, four words| NEXT
-    AC -.->|album key lives only in the master chip| PLATES
-```
-
 ## The ceremony
 
-1. **Cut** - Flex A confirms "Cut master of *Random Access Memories*, edition of 5".
-   The edition size is fixed forever; losing the device destroys the plates.
+1. **Cut** - Flex A asks "Cut master of *Random Access Memories* by Daft Punk?"
+   and states the stakes under it: "Edition of 5, fixed forever. Losing this
+   device destroys the plates."
 2. **Pair** - the two devices run a commit-then-reveal ECDH through the relay;
    both screens show the same 4 words, drawn from a 256-word list. The humans
    compare them out loud: a man-in-the-middle relay cannot make the two screens
    agree.
-3. **Press** - the artist confirms "1 of 5, for device 3FC2A9B1" on the master's
-   own screen. A then mints a bearer key, signs "pressing 1 of 5, bound to this
-   key", seals the key to the paired session and wipes its own copy of it, and
-   the counter decrements in silicon, atomically, *before* the reply leaves the
+3. **Press** - the master asks its own owner first: "Press *Random Access
+   Memories* 1 of 5?", "For device 3FC2A9B1. 4 pressings will remain." Then it
+   mints a bearer key, signs "pressing 1 of 5, bound to this key", seals the key
+   to the paired session, decrements the counter in silicon in one atomic write,
+   and wipes its own copy of the key: all of it *before* the reply leaves the
    device. At 0: sold out, forever. A power cut burns a number, it never
    duplicates one. The receiver stores the copy only if the scalar it received
    is the one the certificate names.
@@ -221,11 +211,11 @@ Same four-word pairing, different payload. The recipient is asked first, on a
 copy whose certificates it has already verified in full, so a refusal or a bad
 certificate costs the giver nothing: it has not been asked anything yet.
 
-Then the giver's side, and it is the one part of this project that is not
-obvious. **Erasing and delivering cannot be atomic across two devices.** If the
-write that releases the key is also the write that erases it, a dropped cable
-destroys somebody's record. So the dangerous write is a *commitment*, not a
-deletion, and the giver's state has three values rather than two:
+The giver's side is the one part of this that is not obvious. **Erasing and
+delivering cannot be atomic across two devices.** If the write that releases the
+key is also the write that erases it, a dropped cable destroys somebody's
+record. So the dangerous write is a *commitment*, not a deletion, and the
+giver's state has three values rather than two:
 
 ```
    free  --GIVE_OFFER p1=0-->  promised  --GIVE_OFFER p1=1-->  flown  --receipt-->  gone
@@ -253,15 +243,13 @@ deletion, and the giver's state has three values rather than two:
 
 ### The screen tells the truth
 
-An earlier build showed "given away" the moment a copy was promised, so an
-interrupted transfer looked exactly like a finished one and nobody knew a device
-had to be reconnected. Now:
+An unfinished transfer must not look like a finished one, or nobody knows a
+device has to be reconnected. So:
 
 - a promised copy's library row reads `#1 of 5 - promised, reconnect 9E4C71D0`,
-  naming the fingerprint of the device the copy is owed to. Both committed
-  states say the same thing, deliberately: the owner's next move is identical
-  either way (find that device), and the row's job is to be actionable, not
-  precise about internals. `GET_INFO` reports the two separately, because a
+  naming the fingerprint of the device the copy is owed to. Both committed states
+  say the same thing, deliberately: the owner's next move is identical either way,
+  which is to find that device. `GET_INFO` reports them separately, because a
   relay offering a cancel does need to tell them apart;
 - a device holding nothing prints its own `Device ID` under the empty state,
   so the device named by that row can actually be identified in a drawer of
@@ -271,16 +259,15 @@ had to be reconnected. Now:
 
 ### Provenance
 
-On the back of the record, beside `Device ID` (the device holding it now):
+On the record's `Device ID` page, beside the device that holds it now:
 
 - **the previous holder**, named by fingerprint. Exactly one hop, and it is the
   one hop that is *proven*: the giver signs a handover record naming both
   devices with its device key, and the taker stores it.
-- **a count of the holders before that**, not their names. Up to 32
-  fingerprints travel with the copy, but nothing signs them, so printing them
-  would dress an unproven trail as evidence. A count says the same true thing in
-  a fixed number of characters, which also happens to be the only version that
-  fits: the page is four rows tall and does not scroll.
+- **a count of the holders before that**, not their names. Up to 32 fingerprints
+  travel with the copy, but nothing signs them, and a count cannot dress an
+  unproven trail as evidence. It is also the only version that fits a page which
+  is four rows tall and does not scroll.
 
 ## Threat model
 
@@ -322,18 +309,12 @@ every update removes and reloads the app. There is no flag to set.
 
 This is not a gap a later version will close. BOLOS *does* offer a place for app
 data to survive an update (App Storage, a `.storage_section` that Ledger Live
-backs up to the phone or desktop and restores afterwards) and **this app
-deliberately declares none**. The reason is that the backup/restore protocol
-carries no freshness: nothing in it tells the device whether the blob coming
-back is the state it last wrote, or that state as it was an hour, a month, a
-hundred presses ago. A restorable snapshot of this app's NVM is therefore a
-**state-rollback primitive**: rewind a master to before its last presses and
-press those numbers again; rewind a copy to before it was given away and hold it
-while the recipient holds it too. Every invariant here rests on a counter that
-only counts down and a commitment that is never widened, and a rollback undoes
-exactly those two. Declaring no storage section is not a missing feature, it is
-anti-rollback by construction: nothing to restore because nothing was ever
-saved. The price is total non-survivability, paid knowingly.
+backs up and restores) and **this app deliberately declares none**, because that
+backup carries no freshness: a restorable snapshot of this NVM is a
+**state-rollback primitive**, and rewinding a master to before its last presses
+or a copy to before it was given away is exactly what every invariant here
+forbids. Nothing to restore because nothing was ever saved. The full reasoning is
+in [docs/protocol.md](docs/protocol.md#updates-and-survivability).
 
 **So the official update procedure is succession, not backup.** Records move the
 only way they ever move, through the ceremony:
@@ -345,7 +326,7 @@ only way they ever move, through the ceremony:
 3. Hand the copies back, again through the ceremony.
 
 Slower than a backup, and that is the whole point: every hop is two humans
-reading four words to each other, and at no moment does a copy exist twice.
+reading four words to each other, and at no moment is a copy usable twice.
 **The PC is only ever a cable, never a vault.** It relays frames it cannot read,
 and the one thing it must never become is a place where a copy of a device's
 state sits waiting to be put back.
@@ -378,8 +359,8 @@ capability into the project that is not there.
   grinding, cert tampering, forged receipts, interrupted transfers, cancel
   abuse) and screen-geometry assertions
 - `relay/` - the untrusted relay: emulator cockpit (two clickable screens +
-  live APDU wire on `:5050`), ceremony driver, give driver, HID transport for
-  real devices
+  live APDU wire on `:5050`), ceremony driver, give driver, development
+  provisioning, HID transport for real devices
 - `scripts/` - build (WSL/aarch64-friendly), emulators, sideloading, captures
 - `docs/protocol.md` - wire formats, APDU map, state machine, per-attack test
   status. The implementer's document.
@@ -399,16 +380,24 @@ Adapt `scripts/env.sh` to your paths, then:
 ```
 scripts/build-video.sh  # cargo ledger build flex, this worktree
 pytest -q tests/        # 61 tests, one or two emulated Flex
+scripts/rehearse-emu.sh --auto    # cut, pair, press, verify on two emulators
 scripts/emu-up.sh       # two persistent emulators (:5001, :5002)
-scripts/cockpit.sh      # clickable dual-screen cockpit + APDU wire (:5050)
-python3 relay/demo_steps.py cut   # then: pair, press, verify
-scripts/rehearse-emu.sh --auto    # the whole ceremony on two emulators
+python3 relay/demo_steps.py art   # then: cut, pair, press, verify
 ```
 
-`scripts/env.sh` and the wrappers that source it (`build.sh`, `test.sh`,
-`emu-up.sh`) pin `APP_DIR` to a sibling `presse` checkout, which is why this
-worktree has its own `build-video.sh`, `env-video.sh` and `rehearse-emu.sh`.
-Use those, or export `APP_DIR`/`APP_ELF` yourself.
+`scripts/env.sh` pins `APP_DIR` to a sibling `presse` checkout, and most scripts
+source it, so they run the sibling's build and not this one. It overrides
+whatever the caller exported, so only the four scripts that set their own paths
+target this worktree: `build-video.sh`, `load-video.sh`, `env-video.sh` and
+`rehearse-emu.sh`. To use any of the others here, edit `env.sh` first. That
+includes `emu-up.sh` above, and `cockpit.sh` (the dual-screen cockpit and APDU
+wire on `:5050`), which additionally runs the sibling checkout's `relay/`.
+
+`demo_steps.py` takes one ceremony beat per invocation, against the emulators
+`emu-up.sh` started: `art` uploads the sleeve (before the cut, since the cut
+hashes it into the certificate), then `cut`, `pair`, `press`, `verify`. There is
+no give beat: a transfer is `tests/test_give.py` in emulation, or
+`scripts/give.sh` on hardware.
 
 On real hardware: `scripts/preflight.sh` (read-only), `scripts/ceremony.sh`
 (cut, pair, press, verify), `scripts/give.sh` (hand a copy on, `--cancel` to
@@ -426,8 +415,9 @@ the boot-check procedure.
 Everything above except *Designed, not built* and the non-goals listed in
 [docs/threat-model.md](docs/threat-model.md):
 cut, pair, press, offline verify, give (three-state commitment, cancel, resume),
-sleeve art sealed into the album certificate, the library, the record card,
-provenance, the authenticity page. 61 tests over one or two emulated Flex, and
+sleeve art sealed into the album certificate, the library, the record card and
+the four sub-pages behind it (the number, the Edition ID, the Device ID with the
+provenance on it, and Learn more). 61 tests over one or two emulated Flex, and
 the ceremony filmed on two physical ones.
 
 Not shipping, by decision rather than by schedule: remote attestation, any

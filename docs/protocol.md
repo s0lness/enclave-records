@@ -488,8 +488,9 @@ move between devices the only way they ever move, through the ceremony:
 3. Hand the copies back, again through the ceremony.
 
 It is slower than a backup and that is the whole point: every hop is two humans
-reading four words to each other, and at no moment does a copy exist twice. The
-laptop's role does not change during an update. **The PC is only ever a cable,
+reading four words to each other, and at no moment is a copy usable twice (the
+flown window is real, but the giver is silent through all of it, see *Two phases*
+above). The laptop's role does not change during an update. **The PC is only ever a cable,
 never a vault**: it relays frames it cannot read, and the one thing it must never
 become is a place where a copy of the device's state sits waiting to be put back.
 
