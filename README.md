@@ -55,6 +55,113 @@ work ownable again, as a numbered object with real scarcity:
 
 A working prototype of that idea, on hardware you can buy today.
 
+## FAQ
+
+Eight questions, answered as the code stands today.
+
+**1. How do I know there's only one copy of each record?**
+
+You can't, at the moment somebody hands it to you. A copy is a secret number
+kept inside the chip. If that number ever escapes to a laptop it can be
+duplicated, and every duplicate answers the possession test identically.
+
+Two things are guaranteed. The edition size: a master cut at 5 presses 5 and
+never a sixth. And a copy is never usable in two places at once while both
+devices run the honest app. If a duplicate keeps changing hands, the two
+histories split at one point and name the device where the split happened,
+which is [detection
+afterwards](docs/threat-model.md#what-the-provenance-chain-adds-and-what-it-does-not).
+
+**2. How do I know I'm talking to a real device?**
+
+You don't. Nothing here checks what sits at the other end of the cable. A
+laptop running the right software can cut a master, press copies and take a
+copy, exactly like a Flex.
+
+The four words you read out loud prove that nobody is relaying between the two
+screens. They prove nothing about what sits at the far end. Device attestation
+would close this and is deliberately [not
+implemented](docs/threat-model.md#attestation-and-why-it-is-not-implemented).
+
+**3. What happens if I lose my device?**
+
+The record is gone, permanently. There is no backup and nothing to restore. A
+lost, broken or wiped Flex takes its records with it, like a fire in a record
+collection.
+
+One thing helps, and only in advance: hand each copy to a second device through
+the normal ceremony before anything goes wrong. It costs foresight and a second
+Flex. See [Updates and survivability](#updates-and-survivability).
+
+**4. Can I back up my records?**
+
+No, by design. A saved copy of the chip's memory could be put back later, and
+that would let someone rewind a copy to before they gave it away, or rewind a
+master to before it pressed. So the app saves nothing outside the chip and has
+nothing to restore.
+
+The same goes for updates: installing a new version of the app erases every
+record on the device. Move the copies to a second device first, update, then
+move them back.
+
+**5. How do you ensure both devices run the same software?**
+
+We don't. Nothing checks it. A modified app is a full peer in every ceremony,
+and so is a laptop. The four words are silent here: they rule out a relay in
+the middle and say nothing about the software at either end.
+
+Ledger hardware can prove which binary it is running. This app does not use it,
+on purpose, and the price of that decision is set out in [Attestation, and why
+it is not
+implemented](docs/threat-model.md#attestation-and-why-it-is-not-implemented).
+
+**6. How does the transfer work? What assures the receiver that the sender has deleted their copy?**
+
+The two devices pair with the four words. The receiver checks the certificates
+and its owner taps first, while nothing on the giver has changed yet. The
+giver's chip then goes through three states in order: **promised** to that one
+device, **flown** written just before the key goes out, **gone** when the
+receiver's receipt comes back and everything is erased.
+
+The receiver's assurance rests on the secure element running the honest app. No
+signature and no receipt can prove that a key is gone from somebody else's
+flash. A giver running a modified app keeps the key, and the receiver never
+knows.
+
+What the protocol does guarantee: the giver falls silent at the promise, before
+the key leaves. From then on it answers no challenge and can promise the copy
+to nobody else, so no verifier ever sees two holders. And it erases only
+against a receipt the receiver produced under the shared session key, so no
+outsider can make a copy vanish. The three states are drawn out in [Giving it
+on](#giving-it-on).
+
+**7. What's the guarantee there will only be a fixed set of editions?**
+
+The count lives in the artist's chip. The edition size is fixed at the cut and
+can never be raised. Each press counts the chip down by one, and that write
+lands before the certificate leaves the device, so a power cut burns a number
+and never doubles one. At zero the master refuses forever. Lose or destroy that
+device and the edition ends where it stands. That holds for a device running
+this app; question 5 covers the other case.
+
+Here is the limit a buyer actually faces: anybody can pick up a Flex and cut a
+master with the same title, the same artist and the same edition size. The
+guarantee is attached to one album key. So check the **Edition ID** on the
+record card against the one the artist publishes on their own channel. Nobody
+can do that step for you.
+
+**8. How do I check a record is genuine?**
+
+Ask the device holding it. Read its two certificates, then send it a random
+number and watch it sign that number with the copy's own key. Offline, no
+server, no network, and it still works years later.
+
+That proves the copy belongs to a real edition signed by one album key, that
+the number and the edition size are the signed ones, and that whatever is
+answering holds the copy right now. It does not prove that the album key
+belongs to the artist named on the sleeve, and it does not prove that the
+responder is a real device.
+
 ## What a copy actually is
 
 One secp256k1 scalar, the **bearer key**, plus the two certificates that make it
