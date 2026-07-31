@@ -33,6 +33,9 @@
 //!   [`run_event_loop`].
 
 use alloc::boxed::Box;
+// Only the development probes intern strings through `ScreenArena`; every
+// production screen owns its own `Vec<CString>` beside the layout.
+#[cfg(feature = "artprobe")]
 use alloc::ffi::CString;
 use alloc::vec::Vec;
 use core::ptr;
@@ -49,8 +52,6 @@ pub const SCREEN_H: i16 = SCREEN_HEIGHT as i16;
 /// draw, run the loop, and only then drop it.
 #[derive(Default)]
 pub struct ScreenArena {
-    /// Only the development probes intern strings through the arena; every
-    /// production screen owns its own `Vec<CString>` beside the layout.
     #[cfg(feature = "artprobe")]
     strings: Vec<CString>,
     bitmaps: Vec<Box<[u8]>>,
