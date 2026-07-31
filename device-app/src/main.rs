@@ -26,6 +26,8 @@ mod handlers {
     pub mod art;
     pub mod collection;
     pub mod cut;
+    #[cfg(feature = "factprobe")]
+    pub mod factprobe;
     pub mod give;
     pub mod info;
     pub mod pair;
@@ -100,6 +102,9 @@ pub enum Instruction {
     LibraryPreview { count: u8 },
     #[cfg(feature = "uiprobe")]
     CardPreview,
+    /// One call onto `os_factory_setting_get`, id and length from the host.
+    #[cfg(feature = "factprobe")]
+    FactoryProbe,
     SetArt { slot: u8 },
     GetArt { chunk: u8, slot: u8 },
     Cut,
@@ -158,6 +163,10 @@ impl TryFrom<ApduHeader> for Instruction {
             (0x65, 0, 0) => Ok(Instruction::CardPreview),
             #[cfg(feature = "uiprobe")]
             (0x63 | 0x65, _, _) => Err(AppSW::WrongP1P2),
+            #[cfg(feature = "factprobe")]
+            (0x69, 0, 0) => Ok(Instruction::FactoryProbe),
+            #[cfg(feature = "factprobe")]
+            (0x69, _, _) => Err(AppSW::WrongP1P2),
             (0x62, slot @ (0 | 1), 0) => Ok(Instruction::SetArt { slot }),
             (0x64, chunk, slot @ (0 | 1)) => Ok(Instruction::GetArt { chunk, slot }),
             (0x10, 0, 0) => Ok(Instruction::Cut),
@@ -404,6 +413,8 @@ fn handle_apdu<'a>(
         }
         #[cfg(feature = "uiprobe")]
         Instruction::CardPreview => handlers::collection::handler_card_preview(command),
+        #[cfg(feature = "factprobe")]
+        Instruction::FactoryProbe => handlers::factprobe::handler_factory_probe(command),
         Instruction::SetArt { slot } => handlers::art::handler_set_art(command, slot),
         Instruction::GetArt { chunk, slot } => handlers::art::handler_get_art(command, chunk, slot),
         Instruction::Cut => handlers::cut::handler_cut(command),

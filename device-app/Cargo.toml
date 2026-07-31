@@ -35,6 +35,12 @@ artprobe = []
 # LIBRARY_PREVIEW and CARD_PREVIEW: synthetic library rows and record cards for
 # states no ceremony can reach (three records, `#1000 of 1000`). Capture only.
 uiprobe = []
+# FACTORY_PROBE: one APDU onto the `os_factory_setting_get` syscall, whose ID
+# space is documented nowhere public. Reads only, changes no state, and answers
+# verbatim; it exists to find out whether the OS hands an app any factory
+# material at all. Never ship it: an INS that returns raw OS bytes is exactly
+# the surface a released app should not carry.
+factprobe = []
 
 [package.metadata.ledger]
 curve = ["secp256k1"]

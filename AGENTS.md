@@ -115,13 +115,22 @@ value fingerprints a device's key, and the label has to say so.
   reach state 2 and never write the flown byte after the send: either is a
   double-spend primitive. The library row says `promised, reconnect XXXXXXXX` for
   both, deliberately.
-- Development screen probes are off by default, behind **two** cargo features:
+- Development screen probes are off by default, behind their own cargo features:
   `artprobe` (ART_TEST and the raw `Screen`/`nbgl_screenPush` path behind it,
   which `scripts/dev/art-test.sh` and `dev/show-sleeve.sh` drive) and `uiprobe`
   (LIBRARY_PREVIEW, CARD_PREVIEW; capture only). Two and not one because
   `--features artprobe,uiprobe` lands at `text` 77104, outside the boot window;
   each alone boots (76080 and 75568). Build with `build.sh -- --features
-  artprobe`.
+  artprobe`. A third, `factprobe`, is not a screen probe: it is FACTORY_PROBE
+  (0x69), one APDU onto the `os_factory_setting_get` syscall, whose id space is
+  documented nowhere public. It reads only and answers verbatim, with the output
+  buffer poisoned to 0xA5 first (Speculos does not implement that syscall: it
+  answers 0 and leaves the buffer alone, so without the poison every id looks
+  like a successful run of zeros) and the call wrapped in its own BOLOS try
+  context (an id the OS refuses throws, and an uncaught throw exits the app,
+  which on hardware costs a physical relaunch). `id 0xDEADBEEF` throws on
+  purpose to prove the catch works before a sweep leans on it. Alone it lands at
+  `text` 75568, boot-checked 6x. Driver: `scripts/dev/factory-sweep.py`.
 - `.nvm_data` is nearly full: `data_size` is 18432 and the app stops booting
   somewhere between 18432 and 19456. Re-run the boot check after *any* NVM struct
   change, or the app installs and dies without a message. (It read 18944 until the
