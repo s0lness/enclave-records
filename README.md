@@ -57,13 +57,19 @@ A working prototype of that idea, on hardware you can buy today.
 
 ## FAQ
 
-Eight questions, answered as the code stands today.
-
 **1. How do I know there's only one copy of each record?**
 
-You can't, at the moment somebody hands it to you. A copy is a secret number
-kept inside the chip. If that number ever escapes to a laptop it can be
-duplicated, and every duplicate answers the possession test identically.
+As this app stands, you can't, at the moment somebody hands it to you. A copy is
+a secret number kept inside the chip. If that number ever escapes to a laptop it
+can be duplicated, and every duplicate answers the possession test identically.
+
+The check that would close this exists on the hardware and works. A Ledger can
+sign a challenge with a factory key over the hash of the app it is currently
+running, so a receiver can demand proof that the far end is a real secure element
+running this exact binary. It is [deliberately left
+out](docs/threat-model.md#attestation-and-why-it-is-not-implemented), for cost
+and because pinning Ledger's issuer key makes Ledger the authority on what
+counts as a genuine copy.
 
 Two things are guaranteed. The edition size: a master cut at 5 presses 5 and
 never a sixth. And a copy is never usable in two places at once while both
