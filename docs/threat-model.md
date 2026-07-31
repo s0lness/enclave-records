@@ -26,9 +26,12 @@ Two things: the secure element erasing a key, and two humans reading four words.
 **The secure element genuinely erasing the key.** When a giver completes a
 handover, the protocol cannot prove to anyone that the scalar is gone from the
 giver's flash. Nothing in a certificate, a signature or a receipt can establish
-that. It is the chip's guarantee, not the protocol's: the app writes the erase
+that. That guarantee belongs to the chip: the app writes the erase
 in a single power-loss-atomic NVM update, and BOLOS plus the secure element are
-what make that write mean what it says. Extract a key from a Ledger secure
+what make that write mean what it says. In RAM the scalar is overwritten with
+volatile stores everywhere it is handled, so an optimiser cannot delete the erase;
+`crypto::scrub` and its call sites in `press.rs` and `give.rs` are the whole of
+that, and it takes `&mut` so a `Copy` array cannot be scrubbed by value. Extract a key from a Ledger secure
 element and the whole thing falls over. That is the explicit bet, taken openly.
 
 **Two humans reading four words aloud.** The pairing is commit-then-reveal ECDH
@@ -39,12 +42,19 @@ blocked twice (the commitment forbids choosing an ephemeral key after seeing the
 peer's, and pairing attempts are capped at 8 per power cycle), so an attacker
 cannot search the 32-bit space online.
 
-**This is a human link, and it is the only way a second copy of a record can ever
-come into existence.** A relay in the middle plus two people who confirm without
-really comparing means the relay holds a session key on each side, unmasks the
-bearer key in flight, and keeps a working copy of it. That copy is permanent,
-undetectable, and indistinguishable from the real one, because it *is* the real
-one. There is no revocation, no log, nothing to notice later.
+**This is a human link, and it is the one route to a second copy that the
+ceremony itself can close.** A relay in the middle plus two people who confirm
+without really comparing means the relay holds a session key on each side,
+unmasks the bearer key in flight, and keeps a working copy of it. That copy is
+permanent, undetectable, and indistinguishable from the real one, because it *is*
+the real one. There is no revocation, no log, nothing to notice later.
+
+Two other routes stay open and no amount of care at the ceremony touches them: a
+modified app at either end, since nothing checks what runs there ([attestation is
+not implemented](#attestation-and-why-it-is-not-implemented)), and a bearer key
+that ever reaches ordinary software, where it can be copied at will. The
+provenance chain addresses what happens to those copies afterwards, and the next
+section is precise about how little that is.
 
 This is a real cost of transferability. In the earlier device-bound design the
 same attack merely wasted a press. A copy that can be handed on by sending a key
@@ -79,14 +89,14 @@ both accepted openly:
   claim it never travelled. This device will take it. The lie is not consistent
   with the link by which that device received the copy, which names it as taker
   at a head of its own, so the two witnesses are about one copy and cannot both
-  be true. Detection by comparison, not refusal.
-- **A fork is an accusation, not yet a verdict.** Two links out of one head,
+  be true. Detection happens by comparison, always after the fact.
+- **A fork is an accusation, and a verdict takes more.** Two links out of one head,
   signed by one device key, toward two different recipients, is that device
   signing two futures for one copy, and both signatures verify under its own key,
   so no testimony is involved. But phase one of a give changes nothing on either
   device, so an honest holder shopping a copy around several candidates produces
-  the same shape. **Duplication is proven when both branches show possession** --
-  a challenge answered, or a further link, since a device signs a handover only
+  the same shape. **Duplication is proven when both branches show possession**: a
+  challenge answered, or a further link, since a device signs a handover only
   for a copy it holds. The signatures give the attribution; possession gives the
   proof.
 
@@ -136,7 +146,9 @@ Three operations, each with a place it belongs.
 
 **Compare two copies claiming the same number.** Two heads, one comparison, and
 each device renders its own as eight words on the History page so the comparison
-can happen out loud. Identical heads with both devices answering CHALLENGE is
+can happen out loud, once the copy has changed hands at least once. A freshly
+pressed copy renders no words, because every copy of that number would render the
+same ones. Identical heads with both devices answering CHALLENGE is
 duplication proven: one history, two holders. Divergent heads say the lineages
 split, and the hop where they split is found by walking the witnesses back from
 each side (`GET_BUNDLE p1=2` on every device that held the copy). Where the two
@@ -179,8 +191,8 @@ renders the same eight words. That matters more than the on-device page does:
 the comparison is between a copy in someone's hand and a witness somebody else
 wrote down, and only one of those two sides is a device.
 
-They live on a sub-page of their own, reached from the Device ID page, for a
-reason that is structural rather than editorial. Every page here is fixed
+They live on a sub-page of their own, reached from the Provenance page, for a
+reason about page height. Every page here is fixed
 height, and eight words wrap; a block whose height follows what the device holds
 is the bug that puts a row under the footer, or past the bottom of the screen,
 where the draw faults outright. So the words are a fixed grid of four lines by
@@ -315,7 +327,7 @@ What a copy does reveal, it reveals to whoever is holding it:
 - **The number and the Edition ID**, public by design. `#N of M` and the
   fingerprint of the album key are what a buyer checks against the artist's
   channel.
-- **The previous holder**, named by fingerprint on the Device ID page and proven
+- **The previous holder**, named by fingerprint on the Provenance page and proven
   by that device's signed handover record.
 - **How far the copy has travelled**: a count of the holders before that one.
   The count is display only and saturates at 255; the chain head behind it is a
@@ -341,7 +353,7 @@ a public ledger or to an anonymous token.
 - **Breaking the secure element.** Extracting a key from the chip breaks
   everything, and it is a stated bet.
 - **Replaying a history from a digest.** A receiver cannot verify the hops
-  behind the head it is handed, and this is a size constraint, not an oversight:
+  behind the head it is handed. That is a size constraint, taken knowingly:
   see *What the provenance chain adds*. Auditing a history means collecting the
   witnesses (`GET_BUNDLE p1=2` on each device that held the copy, or a relay's
   log), which is off-device work this project does not automate.
@@ -361,7 +373,7 @@ a public ledger or to an anonymous token.
 ## Deliberate non-goals
 
 - **The cover is public.** The sleeve travels through the untrusted relay;
-  integrity comes from the signed hash, not from secrecy. A swapped cover fails
+  integrity comes from the signed hash, and nothing here is secret. A swapped cover fails
   the hash and the device silently falls back to generative art. Fine for
   artwork, not a model for private payloads.
 - **Losing the master ends the edition.** The album key exists only in the
