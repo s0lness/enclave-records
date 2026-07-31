@@ -135,6 +135,13 @@ English average of roughly 4.7 letters plus a separator).
 The Great Gatsby is about 47,000 words, roughly 280 KB. It fits, with about
 45,000 bytes of slack, 14 percent of the ceiling (inferred).
 
+Gatsby is the stress test, not the natural fit. The screen argues for works read
+in sips: a poetry collection paginates itself, one poem or stanza per screen,
+with no compromise at all; a novella, aphorisms, or a work commissioned for the
+device, where the screen is the author's line length, use the form instead of
+squeezing a paperback through it. The 54,500-word ceiling is generous for every
+one of these.
+
 ### 5.5 A screen
 
 The body font `INTER_REGULAR_28px` has `line_height` 36 (measured, decoded from
@@ -145,6 +152,18 @@ constants, see `docs/reader.md` section 3.2, and untested on a screen).
 
 Nine lines is about 300 characters, roughly 52 words. Gatsby lands at **850 to
 1150 screens** (inferred). A Flex screen holds about a fifth of a paperback page.
+
+That figure is the transaction layout, not the panel. The header rule, the
+footer rule, the 56 px of list padding and the 28 px body font are NBGL's chrome
+for confirming a transfer; a reading page needs none of it. Full-bleed text with
+small margins recovers roughly 550 of the 600 px, and an embedded reading font
+at a 28 px line height gives 18 to 19 lines of about 40 characters: **110 to 140
+words per screen** (inferred, contingent on the custom font in section 6). The
+panel is about 270 ppi (inferred from the advertised 2.84 inch diagonal), so a
+22 px glyph is small print, not fine print. At 250 words a minute that is a page
+turn every 30 seconds instead of every 12, and Gatsby lands near **350 to 450
+screens** instead of 850 to 1150. Justified text with hyphenation adds a few
+percent on top.
 
 ### 5.6 The cost of the reader itself
 
@@ -169,14 +188,36 @@ books on one device.
 
 ## 6. What would make this fail
 
+**Nobody reads at 52 words a screen.** The arithmetic in 5.5 cuts both ways: at
+NBGL's transaction layout a page turn comes every 12 to 15 seconds, for about
+four hours of Gatsby. The reading density in 5.5 moves the cadence to about 30
+seconds, which is the difference between a gimmick and a reader, but the
+deciding variable is one this repo cannot see: e-ink refresh per page turn, full
+against partial, on a real panel. A turn that costs over a second of flashing
+every 30 seconds is unpleasant at any density. Only hardware and a human
+answer this, which is why the section 8 probe includes both. If the answer is
+bad, the honest fallback is to reposition: the device copy is the artifact, read
+the way a fine-press edition is read, occasionally and deliberately, and the
+claim in section 4 softens to match.
+
 **The text has to be mutilated to be shown.** The Flex fonts cover 0x20..0x7E
 and nothing else, on three independent counts (measured): `first_char` /
 `last_char` in the font metrics, `HAVE_LANGUAGE_PACK` absent from the Flex
 defines, and four of the five unicode accessors having no trampoline, so an app
 calling them does not link. Em dashes, curly quotes and ellipses cannot be
 rendered at all. Every text must be transliterated to ASCII before it ships, and
-Gatsby is full of exactly those characters. That is a real loss on a page, and
-it is permanent.
+Gatsby is full of exactly those characters. That is a real loss on a page.
+
+It is only permanent through the SDK fonts, though. An app that embeds its own
+glyphs and draws them as bitmaps bypasses the font tables entirely, fixes
+coverage (accents included, which unlocks French), and sets its own line height,
+which is what the reading density in 5.5 assumes. The draw path is not
+speculative: this app already renders a 1bpp bitmap of its own, the 2 KB cover
+square. A face covering ASCII plus Latin-1 accents at reading size costs a few
+KiB of flash (inferred). The price is pagination: the syscall in 5.6 measures
+SDK fonts only, so a custom face brings its own line-breaker, fed by a
+build-time advance table. Whether the bitmap path is fast enough for a full
+page of glyphs is **untested**, like everything else on hardware.
 
 **Nothing has run on hardware.** The link-time and ELF-level results above are
 solid. Reading `.text` as data on a live secure element, e-ink ghosting over a
@@ -217,7 +258,11 @@ theirs.
 | Fonts are ASCII-only | measured, three independent counts |
 | 9 lines per screen | derived from SDK constants, untested on a screen |
 | Gatsby fits with 14 percent margin | inferred from a word-count estimate |
-| 850 to 1150 screens | inferred |
+| 850 to 1150 screens at the NBGL layout | inferred |
+| 110 to 140 words per screen at reading density | inferred, needs the custom font |
+| 350 to 450 screens at reading density | inferred |
+| Custom bitmap font renders on the panel | draw path exists in-app (cover art); a full page of glyphs untested |
+| E-ink refresh cost per page turn | untested, decides the reading experience |
 | Reader costs 300 to 450 bytes | inferred |
 | Three books per device | inferred, free-space figure unverified here |
 | Anything at all on a physical Flex | untested |
@@ -228,3 +273,8 @@ The engineering design is [`docs/reader.md`](reader.md): where the text sits, ho
 a page is found, what goes in NVM, how the bookmark travels with a given copy,
 and a twelve-step build order whose first step is a probe that either confirms
 the whole approach or kills it in an afternoon.
+
+The same afternoon should probe the experience, not just the linker: measure
+the panel's refresh per page turn, full and partial, then have two people read
+for twenty minutes at each density in 5.5. That converts sections 5.5 and 6
+from argument into data for one day on hardware.
