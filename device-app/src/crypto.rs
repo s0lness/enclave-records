@@ -43,6 +43,23 @@ pub fn mac_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     diff == 0
 }
 
+/// Overwrite a scalar where it sits, with stores the optimiser may not drop.
+///
+/// Two ways a scrub silently does nothing, both of which this signature closes.
+/// A `[u8; 32]` is `Copy`, so `let mut s = secret; s.fill(0)` zeroes a fresh
+/// copy and leaves the secret untouched: taking `&mut` means the caller can
+/// only ever hand over the real slot. And a plain store to a value nothing
+/// reads again is a dead store, which LLVM is entitled to delete: only a
+/// volatile write is guaranteed to reach the stack.
+pub fn scrub(secret: &mut [u8; 32]) {
+    for byte in secret.iter_mut() {
+        // SAFETY: `byte` is a live, aligned, initialised `u8`, borrowed for the
+        // whole of the write. Volatile is what keeps the store, nothing else.
+        unsafe { core::ptr::write_volatile(byte, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
 /// Generate a fresh keypair from the TRNG. The scalar never derives from the
 /// seed: the device owner knows their 24 words and could recompute a
 /// seed-derived key off-device, voiding the captivity argument.

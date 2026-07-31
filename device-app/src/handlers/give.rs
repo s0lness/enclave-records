@@ -365,7 +365,11 @@ pub fn handler_give_offer<'a>(
 
     let mut bearer = nvm.pressing_priv;
     let sealed = session.bearer_xor(INS_GIVE_OFFER, session.send_seq, &bearer)?;
-    bearer.fill(0);
+    // Both slots the scalar reached: the one handed to the seal, and the one
+    // inside this function's snapshot of NVM. Flash keeps the key deliberately,
+    // to be re-sent until the receipt arrives; the stack has no such reason.
+    crypto::scrub(&mut bearer);
+    crypto::scrub(&mut nvm.pressing_priv);
     let mac = session.mac_send(INS_GIVE_OFFER, &sealed)?;
     let mut response = command.into_response();
     response.append(&sealed)?;

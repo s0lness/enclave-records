@@ -120,7 +120,7 @@ pub fn handler_press_offer<'a>(
     }
 
     let album_id = crypto::sha256(&[&nvm.alb_pub])?;
-    let (bearer_priv, bearer_pub) = crypto::gen_keypair()?;
+    let (mut bearer_priv, bearer_pub) = crypto::gen_keypair()?;
     let cert = build_pressing_cert(&nvm.alb_priv, &album_id, number, nvm.edition, &bearer_pub)?;
     // Sealed against the send counter this very frame will carry, so the pad is
     // the frame's own and cannot be shared with another transfer in the session.
@@ -137,9 +137,9 @@ pub fn handler_press_offer<'a>(
     Store::put(&nvm);
 
     // The master keeps no copy of the bearer key: it minted the copy, it does
-    // not hold it. Scrub the scalar now that it is sealed for the wire.
-    let mut bearer_priv = bearer_priv;
-    bearer_priv.fill(0);
+    // not hold it. Scrub the scalar now that it is sealed for the wire, in the
+    // slot it was minted in and with a store that survives optimisation.
+    crypto::scrub(&mut bearer_priv);
 
     let mut payload = [0u8; PRESSING_CERT_LEN + BEARER_KEY_LEN];
     payload[..PRESSING_CERT_LEN].copy_from_slice(&cert);
