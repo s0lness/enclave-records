@@ -175,7 +175,7 @@ d'abord**:
 **À filmer**: les deux taps dans cet ordre, l'écran du donneur qui passe à
 `No records here` / « You gave your copy away. », et celui du receveur où la
 pochette apparaît. Puis la fiche du receveur, page 2, ligne `Provenance` (dont
-la valeur est passée à `1 handover`, tapée): la sous-page nomme l'appareil cédant
+la valeur est passée à `1 hop`, tapée): la sous-page nomme l'appareil cédant
 sous `Where it came from` (`XXXXXXXX, the one handover this device can prove.`).
 La provenance vit sur cette sous-page parce que la page 2 tient quatre lignes et
 qu'une cinquième se dessine sous le pied de page.
@@ -305,8 +305,8 @@ et `Back` en pied de page):
 - **page 2**: quatre lignes navigables, chacune ouvrant sa sous-page: `Number`
   (`#1 of 5`), `Edition ID` (8 hex de `SHA256(albpub)`, la même sur toutes les
   copies de l'édition), `Provenance` (`Master` pour une plaque, `Pressed` pour une
-  copie encore sur l'appareil qui l'a reçue au pressage, puis `1 handover` et
-  `N handovers`) et `Learn more`. Quatre lignes toujours, quoi que tienne
+  copie encore sur l'appareil qui l'a reçue au pressage, puis `1 hop` et
+  `N hops`) et `Learn more`. Quatre lignes toujours, quoi que tienne
   l'appareil. L'empreinte de l'appareil qui tient la fiche est la première paire
   de la page `Provenance`.
 

@@ -399,7 +399,8 @@ Tapping a row opens the **record card**, a two-page generic review:
   relocation on this target) that is the tap affordance into the row's own
   sub-page: Number (`#N of M`, `#0 of M` for a master), Edition ID (the first 8
   hex of `SHA256(albpub)`), Provenance (`Master` for a plate, `Pressed` for a copy
-  still on the device it was pressed onto, then `1 handover` and `N handovers`),
+  still on the device it was pressed onto, then `1 hop` and `N hops`, the short
+  word chosen so the count stays inside the value column at every `u8` value),
   and "Learn more". **Four rows, always**, whatever the device holds: the list area
   is four touchable bars tall and a fifth is drawn under the split footer, so the
   count is fixed by the type of the array the rows are built into. The
