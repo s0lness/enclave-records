@@ -4,9 +4,9 @@ How a book gets into the app, onto the screen, and back out of it.
 
 Nothing here is built yet. Every number below is either measured (with its
 source named) or marked as an estimate with the measurement
-that would settle it. The distinction is load-bearing: this app already dies
-silently for reasons nobody has fully explained, and a design built on
-plausible-looking arithmetic would die the same way.
+that would settle it. The distinction is load-bearing: this app has already
+designed around a size ceiling that turned out to be an emulator bug
+(section 8.3), and plausible-looking arithmetic is how that detour started.
 
 ## 0. What changes, and what does not
 
@@ -73,13 +73,18 @@ infos.data_size = envram_data - nvram_data;
 ```
 
 **`data_size` = `.rodata` + `.nvm_data`.** A plain `static` in Rust lands in
-`.rodata`, so a 270 KB book declared the obvious way adds 270 KB to `data_size`.
-The current build's `data_size` is 16384, and AGENTS.md records that the app
-stops booting somewhere between 18432 and 19456. A book in `.rodata` misses that
-by a factor of seventeen.
+`.rodata`, so a 270 KB book declared the obvious way adds 270 KB to `data_size`,
+which is 18432 in the current build.
+
+That number has no ceiling of its own. Both halves are carved out of the same
+400 KiB, so a book costs the same flash whichever section holds it, and the only
+hard limit is the region. What `data_size` does buy is a signal: kept small and
+stable, any movement in it means something landed in `.rodata` or `.nvm_data`
+that was not meant to, which is a cheap regression check to have on a build that
+is about to grow by a factor of four. A 286 KB `data_size` would drown it.
 
 `.text` is the other half of flash, immutable, with no relocations applied to
-it. `src/ballast.rs` already exploits exactly this asymmetry:
+it. The instrument for growing it on purpose is a ballast static:
 
 ```rust
 #[cfg(feature = "ballast_text")]
@@ -89,37 +94,47 @@ it. `src/ballast.rs` already exploits exactly this asymmetry:
 pub static BALLAST_TEXT: [u8; TEXT_BYTES] = [0xA5; TEXT_BYTES];
 ```
 
-with the comment (`ballast.rs:42-44`) explaining that `.text` filler "grows the
-immutable half of flash and leaves the mutable half where it was."
+Filler there grows the immutable half of flash and leaves the mutable half
+where it was, which is what makes a size sweep mean anything. **No such file is
+in the tree**: `device-app/src/` has no `ballast.rs` and `Cargo.toml` has no
+`ballast_text` feature, so step 1 of section 9 writes it before it can sweep.
 
-**The book goes in `.text`, via `#[link_section = ".text"]`.** This is the
-single most important decision in the document and section 8.1 explains what it
-does not yet prove.
+**The book goes in `.text`, via `#[link_section = ".text"]`.** It keeps the book
+out of the one number worth watching, and section 8.1 explains what it does not
+yet prove.
 
 ### 1.2 The current build
 
-Measured off `device-app/target/flex/release/presse` at 11:47 on 2026-07-31:
+Measured off `device-app/target/flex/release/presse` (ELF section headers and
+symbol table) on 2026-07-31:
 
-| section | size |
-|---|---|
-| `.text` | 61440 |
-| `.rel_flash` | 304 |
-| `.rodata` | 9216 |
-| `.nvm_data` | 7582 |
-| `.bss` | 36864 |
+| section | addr | size |
+|---|---|---|
+| `.text` | `0xc0de0000` | 60928 |
+| `.rel_flash` | `0xc0deee00` | 2352 |
+| `.rodata` | `0xc0def800` | 11264 |
+| `.nvm_data` | `0xc0df2400` | 7582 |
+| `.bss` | `0xda7a0000` | 36864 |
 
-`arm-none-eabi-size` reports `text` = 70960 (`.text` + `.rel_flash` + `.rodata`)
-and the symbols give `data_size` = 16384, confirmed against the `createApp`
-frame in `presse.apdu` (`data_length: 16384`).
+`arm-none-eabi-size` reports `text` = 74544 (`.text` + `.rel_flash` +
+`.rodata`), and the symbols give `data_size` = `_envram_data - _nvram_data` =
+`0xc0df4000 - 0xc0def800` = 18432, confirmed against the `createApp` frame in
+`presse.apdu`.
 
-This disagrees with AGENTS.md, which records the last boot-checked pair as
-`text` 74544 / `data_size` 18432 and a floor at 74032. The binary on disk is
-3584 bytes of `text` below that documented floor. Either the floor is stale or
-this ELF is mid-refactor and unverified; the flash-diet and boot-floor work in
-flight will settle it. Nothing below depends on which.
+Two derived figures matter more than either of those.
 
-Headroom, taking 400 KiB as the ceiling and 71 KB as the app: **about 330 KB**
-for text, index and reader code together.
+**The image is `_text` to `_nvram_end`**, `0xc0de0000` to `0xc0df419e`, **82334
+bytes: 20.1% of the 400 KiB region.** That is the app's real footprint, and the
+400 KiB is the only ceiling there is.
+
+**The load size is `_erodata - _text` = 74752**, the `p_filesz` Speculos sizes
+its mapping from. It runs 208 bytes above `text`, because the linker pads
+`.rel_flash` from 2352 up to 2560, and that padding moves with the relocation
+count. 74752 mod 4096 = 1024, so this build clears the emulator notch described
+in section 8.3.
+
+Headroom, 400 KiB minus the 80.4 KiB image: **about 320 KiB** for text, index
+and reader code together.
 
 ### 1.3 The fonts
 
@@ -271,10 +286,10 @@ draw.
 ```rust
 /// The book, ASCII, NUL-terminated, one contiguous blob.
 ///
-/// `.text` and not `.rodata`: `data_size` is `_envram_data - _nvram_data` and
-/// `.rodata` sits inside that window, so a `static` declared the obvious way
-/// would add the whole book to the number the loader is told, against a
-/// `data_size` measured working at 16384.
+/// `.text`, so that `data_size` (`_envram_data - _nvram_data`, 18432 today)
+/// stays a legible number: `.rodata` sits inside that window, so a `static`
+/// declared the obvious way would fold the whole book into it and any later
+/// movement in the figure would say nothing.
 #[used]
 #[link_section = ".text"]
 pub static BOOK: [u8; BOOK_LEN] = *include_bytes!(concat!(env!("OUT_DIR"), "/book.bin"));
@@ -298,20 +313,21 @@ control character. No packing in the first build.
 The Great Gatsby is about 47,000 words. English averages roughly 4.7 letters per
 word plus a separator, so **250 to 280 KB** raw. The exact figure falls out of
 the first run of the pipeline and should be written into this document when it
-does. Against 330 KB of headroom that fits with 50 to 80 KB of slack, which also
-has to cover the reader's code.
+does. Against the 320 KiB of headroom in section 1.2 that fits with 40 to 70 KB
+of slack, which also has to cover the reader's code.
 
 The alternatives, and why they lose:
 
 **Five-bit packing** (a Z-machine-style three-characters-per-word scheme with
 shift codes for capitals and punctuation) reaches roughly 0.7 bytes per
 character, so about 190 KB. It saves 80 KB for a decoder of roughly 100 to 150
-bytes. It is a real win and it should be held in reserve, not spent now, for two
-reasons. The binding constraint on this app is the unexplained boot window,
-which is hostile to 190 KB and 270 KB alike until somebody understands it, so
-80 KB of flash buys nothing today; and a packed blob means the reader cannot hand
-NBGL a pointer into flash, which forces every experiment to go through a decoder
-that is itself unproven. Design the read path behind a single function
+bytes, and it would roughly double the slack above. It is a real win, and it
+should still be held in reserve until the raw build exists: a packed blob means
+the reader cannot hand NBGL a pointer into flash, which forces every experiment
+through a decoder that is itself unproven, on top of a `.text` read path that
+has never been exercised either (section 8.1). Two unproven things at once, to
+buy room the raw estimate already has. Design the read path behind a single
+function
 
 ```rust
 fn page_bytes(from: u32, max_len: usize, out: &mut [u8]) -> usize;
@@ -656,7 +672,7 @@ position to it would mean:
 - every screen draw carries the reading state on the stack for no reason.
 
 The reading state gets its own `.nvm_data` object, following the precedent of
-`ART_MASTER` / `ART_PRESSING` (`state.rs:233-237`), which exist for the same
+`ART_MASTER` / `ART_PRESSING` (`state.rs:235-239`), which exist for the same
 reason (`state.rs:193-194`: "Kept out of `PresseNvm` because that struct is
 copied through the stack on every read").
 
@@ -704,10 +720,13 @@ pub struct ReaderNvm {
 is 288 bytes, and page-aligned in `.nvm_data` that is **512 bytes of
 `data_size`**, one flash page.
 
-512 bytes against a `data_size` measured at 16384 today and a documented boot
-failure somewhere above 18432. That is a real cost on a scarce resource and it
-must be boot-checked with `scripts/boottest.sh` at 3/3 the moment it lands, on
-its own, before any reader code exists.
+512 bytes against a 400 KiB region that is 20% used is nothing to pay. Boot-check
+it with `scripts/boottest.sh` at 3/3 the moment it lands, on its own, before any
+reader code exists, for a different reason: a new object in `.nvm_data` moves the
+section's layout, and every offset in it has to stay inside what the emulator
+maps (section 8.3). A struct that lands past that boundary reads as zeros with no
+error anywhere, which is exactly how a resume feature would look correct and
+silently forget the page.
 
 One anchor set, not two. Keeping anchors for both font sizes would cost a second
 512-byte page; recomputing on a size change costs a walk the user waits through
@@ -740,7 +759,7 @@ Two rules that apply either way:
 
 - skip the write when the offset has not changed (a tap on `<` at page 1);
 - never call `Store::get()` on the reader path, because it is not a pure read
-  (`state.rs:301-307` writes NVM when `initialized == 0`).
+  (`state.rs:303-309` writes NVM when `initialized == 0`).
 
 ## 6. Ownership, or the lack of it
 
@@ -867,26 +886,28 @@ grow with device state, which is the shape of bug AGENTS.md warns about.
 **How it manifests.** Two separate failures hide here.
 
 The placement failure: a `static` declared without `#[link_section = ".text"]`
-lands in `.rodata`, `data_size` becomes about 286 KB, and the app installs and
-dies before its first APDU with `exit called (0)` in the Speculos log. No error,
-no message.
+lands in `.rodata` and `data_size` becomes about 286 KB. Nothing crashes over
+it, since both sections spend the same 400 KiB, and that is what makes it easy
+to miss: the build works, the app boots, and the one figure that would have
+flagged an accidental `.rodata` or `.nvm_data` growth from then on is buried
+under the book.
 
-The access failure: `BALLAST_TEXT` proves that a `[u8; N]` in `.text` links and
-that the resulting binary boots at N = 5120. **It does not prove that anything
-can read it.** Nothing in this app has ever dereferenced a byte of it, by
-design: `ballast.rs:30` says "Read by nothing." The target is `ropi-rwpi`
-(`devices/flex/flex.json`), `.text` is declared in `link.ld` as needing no
-relocations, and the SDK's `pic()` relocates pointers in `_nvram_start.._nvram_end`
-which covers `.text`. That reasoning says it works. Reasoning is not a
-measurement, and the app already has one documented case where a runtime pointer
-faulted under PIC relocation (`build.rs:49-51`, on glyphs).
+The access failure: **nothing in this app has ever dereferenced a byte of
+`.text` as data.** The ballast of section 1.1 would show that a `[u8; N]` there
+links and boots, and it would still show nothing about reading it. The target is
+`ropi-rwpi` (`devices/flex/flex.json`), `.text` is declared in `link.ld` as
+needing no relocations, and the SDK's `pic()` relocates pointers in
+`_nvram_start.._nvram_end` which covers `.text`. That reasoning says it works.
+Reasoning is not a measurement, and the app already has one documented case
+where a runtime pointer faulted under PIC relocation (`build.rs:49-51`, on
+glyphs).
 
 **How to detect it early.** The first experiment, before any reader code:
 `#[link_section = ".text"] static PROBE: [u8; 4096]` filled with a known
 pattern, plus a development APDU that returns `PROBE[i]` for a caller-supplied
 `i`. If it returns the pattern, the whole design stands. If it faults, the book
-has to live in `.rodata` and the entire `data_size` question reopens, which
-would very likely kill the project until the boot floor is understood.
+falls back to `.rodata`, which costs the `data_size` signal and nothing else in
+flash; the project survives it.
 
 **What to do about it.** Run that probe on day one. Read `data_size` off every
 single build (`cargo ledger build flex | grep -oE "data_size: [0-9]+"`) and
@@ -910,30 +931,42 @@ text does. If runtime pagination is in use the budget is an input to
 `nbgl_getTextMaxLenInNbLines` and cannot be exceeded by construction, which is
 the strongest argument for that scheme.
 
-### 8.3 The boot window
+### 8.3 The emulator's notch, and the 400 KiB edge
 
 **How it manifests.** The app installs, panics before its first APDU
-(`exiting_panic` -> `exit_app(0)`), and answers nothing.
+(`exiting_panic` -> `exit_app(0)`), and answers nothing. Under Speculos it has
+one known cause, in the emulator itself: stock Speculos sizes the app's mapping
+from the `PT_LOAD` holding `.text` plus one page, `.nvm_data` is a separate
+`PT_LOAD`, and only 4096 to 7680 bytes of it arrive. At a load size that is a
+multiple of 4096 exactly one page arrives, both `AtomicStorage` validity flags
+fall outside it, and `which()` panics. Physical Flexes are unaffected.
+`docs/speculos-nvm-loading.md` has the measurement and the fix. Every "boot
+window" number this repo once carried, 74032..76080 and the rest, was this.
 
-**How to detect it early.** `scripts/boottest.sh` is the instrument: it launches
-Speculos, polls `b501000000` (GET_INFO) once a second up to a deadline, and
-distinguishes `ok` / `panic` / `slow`, with `slow` retried rather than counted.
-A point is only usable at 3/3.
+The other hazard here is the plain one: the app image cannot exceed 400 KiB, and
+it stands at 20% of that today.
 
-**What to do about it.** The reader multiplies `text` by roughly five, from
-71 KB to something near 350 KB, and the last documented working band is
-74032..76080. **Nothing in this repo says a 350 KB app boots.** Before writing a
-line of reader code, sweep `BALLAST_TEXT` upward in 512-byte steps toward
-320 KB with `scripts/dev/text-sweep.sh` and boot-check each point 3/3. That
-sweep is the gate on the whole project. If the window is a real narrow band
-rather than a defect in the link configuration, no book fits and the answer is a
-much shorter work, or nothing.
+**How to detect it early.** Three instruments, already in the tree.
+`scripts/patch-speculos.sh` fixes the emulator in `~/venv-ledger` and `env.sh`
+re-applies it on every source, so the notch stops firing at all; `pip install -U
+speculos` puts the bug back. `presse_check_load_size` in `scripts/env.sh` fails
+the build when `_erodata - _text` is a multiple of 4096, so a binary that would
+die on somebody else's stock emulator never leaves quietly (`ALLOW_NVM_NOTCH=1`
+overrides). `scripts/boottest.sh` launches Speculos, polls `b501000000`
+(GET_INFO) once a second up to a deadline, and distinguishes `ok` / `panic` /
+`slow`, with `slow` retried rather than counted; a point is only usable at 3/3.
 
-The boot-floor investigation running in parallel may make this moot. Two ways it
-changes a decision: if the window turns out to be a link bug that is fixed, the
-book size stops mattering and 5-bit packing becomes pointless; if the window is
-real and narrow, packing becomes mandatory and the choice of work changes from a
-47,000-word novel to something under 20,000 words.
+**What to do about it.** The reader multiplies the image by roughly four, from
+80 KB to something near 350 KB, which is 85% of the region. Nothing in this repo
+has ever run an app that large, and the last 15% has to hold every later
+addition. So the sweep stays the first step, now gating on the region's edge:
+write the ballast of section 1.1, walk `TEXT_BYTES` up toward 320 KB,
+boot-check 3/3 at each point, and read the load size at each point too, since a
+sweep in 512-byte steps crosses the notch every eighth point on a stock
+emulator and would otherwise read as a band of failures again.
+
+A book that does not fit is answered by packing (section 2.2, 190 KB five-bit or
+120 KB dictionary) before it is answered by a shorter work.
 
 ### 8.4 RAM
 
@@ -1075,7 +1108,7 @@ both ends and a book does not.
 
 **How it manifests.** Nothing, most of the time. `Store::get()` generates the
 device keypair and writes NVM when `initialized == 0`
-(`state.rs:301-307`), so a function everything treats as a read is not one. A
+(`state.rs:303-309`), so a function everything treats as a read is not one. A
 reader that calls it per page turn writes flash on a virgin device, once, and
 then costs a 1176-byte stack copy on every turn forever.
 
@@ -1100,15 +1133,17 @@ Each step is testable on its own and each one can fail without wasting the next.
 
 **0. Prove the flash.** `#[link_section = ".text"] static PROBE: [u8; 4096]`
 with a known pattern, plus a `factprobe`-style development APDU returning
-`PROBE[i]`. Boot-check 3/3. Read `text` and `data_size` off the build and
-confirm `data_size` did not move. *Passes when the APDU returns the pattern and
-`data_size` is unchanged.* This gates everything; if it fails, stop.
+`PROBE[i]`. Boot-check 3/3 on a patched emulator. Read `text` and `data_size`
+off the build and confirm `data_size` stayed at 18432. *Passes when the APDU
+returns the pattern and `data_size` is unchanged.* This gates everything; if it
+fails, stop.
 
-**1. Prove the sweep.** `scripts/dev/text-sweep.sh` with `BALLAST_TEXT` from
-5120 up to 320 KB in whatever steps patience allows, boot-checked 3/3 at each
-point. *Passes when a 320 KB `text` boots.* If it does not, the book must
-shrink or be packed, and the size question comes back before any code is
-written.
+**1. Prove the sweep.** Write `device-app/src/ballast.rs` and its
+`ballast_text` feature (section 1.1: neither exists yet) plus a sweep script,
+and walk `TEXT_BYTES` from 5120 up to 320 KB in whatever steps patience allows,
+boot-checked 3/3 and load-size-logged at each point. *Passes when a 320 KB
+`text` boots.* If it does not, the book must shrink or be packed, and the size
+question comes back before any code is written.
 
 **2. Prove the primitive.** A development APDU that calls
 `nbgl_getTextMaxLenInNbLines(INTER_REGULAR_28px, &PROBE_TEXT[off], 416, 9, &len,
@@ -1173,7 +1208,7 @@ page one.*
 |---|---|
 | Does a `static` in `.text` read correctly under ROPI? | Step 0. |
 | Does a 320 KB `text` boot? | Step 1, the ballast sweep. |
-| Is the boot window a link defect? | The investigation in flight. Changes whether packing is optional or mandatory. |
+| Does packing become mandatory? | Step 1 against step 3: the measured book length against the measured headroom. The 400 KiB region is the only ceiling, and 320 KiB of it is free today. |
 | Exact break semantics of `nbgl_getTextMaxLenInNbLines` | Step 2. The source is in the OS and cannot be read. |
 | Real usable body height with `nbgl_layoutAddText` | Step 4, `y` coordinates from Speculos `/events`. Derived here as 356 px. |
 | Characters per line for real English in Inter Regular 28px | Step 7's walk, as a by-product. Bounded here at 26 to 34. |

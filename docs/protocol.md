@@ -323,11 +323,14 @@ the `sleeve_hash` already inside the album cert the receiver stored.
 ## Sleeve art
 
 A sleeve is the album cover: a square **1bpp** bitmap, `N x N`, `N*N/8` bytes,
-no header. `N = 128` (2048 bytes) is the largest that fits, since the device
-keeps one slot per record it can hold (a master and a pressing) and the app
-stops booting between a `data_size` of 18432 and 19456. The device draws
-the title itself, at runtime, from the certificate; the bitmap carries no
-typography, so a baked-in title can never disagree with the signed one.
+no header. `N = 128` (2048 bytes), fixed by the write path: the device keeps
+one slot per record it can hold (a master and a pressing) and writes each slot
+in 64-byte cells, so `N*N/8` has to divide by 64, which rules out every width
+between 128 and 160. Flash is comfortable at that size and would be comfortable
+at 160: the per-app region is 400 KiB and the whole image uses about 20% of it.
+The device draws the title itself, at runtime, from the certificate; the bitmap
+carries no typography, so a baked-in title can never disagree with the signed
+one.
 
 **Packing** (host side, `scripts/sleeve.py`; device rendering is the inverse).
 The display decodes the buffer row-major and shows it rotated 90 degrees

@@ -193,19 +193,21 @@ static mut DATA: NVMData<AtomicStorage<PresseNvm>> = NVMData::new(AtomicStorage:
 /// Cover art: a square 1bpp sleeve. Kept out of `PresseNvm` because that
 /// struct is copied through the stack on every read.
 ///
-/// Two constraints pin the width at 128 once the device keeps two slots.
+/// The width is pinned at 128 by the cell rule.
 ///
-/// * **Multiple of 32.** The art is written in [`ART_CHUNK`]-byte cells, so
-///   `ART_W * ART_W / 8` has to divide by 64. A width that does not (144, 152)
-///   leaves `ART_CELLS * ART_CHUNK` short of `ART_LEN`, and every read through
-///   [`Art::get`] runs off the end of the array.
-/// * **Boot.** Two 160-wide slots produce an app the loader installs but that
-///   exits before serving its first APDU, in every arrangement tried: one
-///   nested array, one flat array, and two separate storage objects all die.
-///   Two 128-wide slots boot. `data_size` alone does not explain it (an inert
-///   ballast array boots at 21504, well past the 19968 of two 160-wide slots),
-///   so treat the working configuration as measured, not as derived: re-run
-///   `scripts/build-video.sh` and the boot check after any change here.
+/// **Multiple of 32.** The art is written in [`ART_CHUNK`]-byte cells, so
+/// `ART_W * ART_W / 8` has to divide by 64. A width that misses that (144, 152)
+/// leaves `ART_CELLS * ART_CHUNK` short of `ART_LEN`, and every read through
+/// [`Art::get`] runs off the end of the array. That is what excludes every
+/// width between 128 and 160.
+///
+/// Flash affords more: the per-app region is 400 KiB and the whole image uses
+/// about a fifth of it, so two 160-wide slots fit with room to spare. The boot
+/// failure once recorded here against those slots came from a Speculos
+/// loader defect that dropped most of `.nvm_data` (see
+/// `docs/speculos-nvm-loading.md` and `scripts/patch-speculos.sh`), so it is no
+/// evidence about the width. Anything that wants 160 re-runs the art tests and
+/// a boot check on a patched emulator.
 pub const ART_W: usize = 128;
 pub const ART_LEN: usize = ART_W * ART_W / 8;
 

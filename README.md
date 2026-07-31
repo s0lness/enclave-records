@@ -534,7 +534,8 @@ capability into the project that is not there.
   provisioning, HID transport for real devices
 - `scripts/` - the dozen commands you actually run: build, sideload, tests,
   emulators, ceremony, give, pre-flight. `scripts/dev/` holds the development
-  archaeology (NVM-ceiling probes, SDK spelunking, screen captures);
+  archaeology (sweeps that chased an NVM ceiling that turned out to be the
+  emulator's loader, SDK spelunking, screen captures);
   `scripts/windows/` holds the two PowerShell files, which exist only to forward
   USB into WSL and have no Linux or macOS equivalent
 - `docs/protocol.md` - wire formats, APDU map, state machine, per-attack test
@@ -572,8 +573,8 @@ speculos and pytest already on `PATH` needs no editing at all.
 files forward a USB device into WSL, a problem that exists only on Windows: a
 Ledger plugged into Linux or macOS is already visible to the host. Nothing else
 in `scripts/` is platform-specific. `scripts/dev/` is development archaeology
-(NVM-ceiling probes, SDK symbol dumps, screen captures) and can be ignored until
-you need it.
+(sweeps that chased an NVM ceiling that turned out to be the emulator's loader,
+SDK symbol dumps, screen captures) and can be ignored until you need it.
 
 `demo_steps.py` takes one ceremony beat per invocation, against the emulators
 `emu-up.sh` started: `art` uploads the sleeve (before the cut, since the cut
@@ -587,10 +588,13 @@ take a promise back). See [CEREMONIE-VIDEO.md](CEREMONIE-VIDEO.md) for the full
 runbook and [docs/m5-hardware.md](docs/m5-hardware.md) for sideloading and
 USB-to-WSL passthrough.
 
-One build-time trap worth knowing before you touch the Rust: the app boots only
-inside a *window* of code size, and dies silently in both directions outside it,
-so **deleting code can break the app**. `AGENTS.md` has the measured numbers and
-the boot-check procedure.
+One build-time trap worth knowing before you touch the Rust, and it lives in the
+emulator: stock Speculos loads only part of a Rust app's `.nvm_data`, which
+kills some builds outright and silently hides part of NVM in the rest.
+`scripts/patch-speculos.sh` fixes the emulator and `scripts/env.sh` guards the
+build against the sizes that trip it. Flash itself is roomy: the per-app region
+is 400 KiB and the app uses about 20% of it, so a diet of any size is safe. See
+`AGENTS.md` and [docs/speculos-nvm-loading.md](docs/speculos-nvm-loading.md).
 
 ## What ships today
 
