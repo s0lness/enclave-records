@@ -43,9 +43,9 @@ thesis (physical editions of digital works, no chain, no server).
   `speculos-nvm-data.patch`, which fix the emulator (see Gotchas).
   `build-video.sh` and
   `load-video.sh` are aliases of `build.sh`/`load.sh`, kept because the runbook
-  calls them by those names. `scripts/dev/` is development archaeology (NVM
-  ceiling and art sweeps, SDK symbol dumps, screen captures, `tap.sh`,
-  `provision.sh`); `scripts/windows/` is the two usbipd PowerShell helpers, which
+  calls them by those names. `scripts/dev/` is development archaeology (sweeps
+  that hunted an NVM ceiling which turned out to be the Speculos loader, SDK
+  symbol dumps, screen captures, `tap.sh`, `provision.sh`); `scripts/windows/` is the two usbipd PowerShell helpers, which
   exist only because Windows has to forward USB into WSL. No script hardcodes a
   path any more: pass `APP_DIR`/`APP_ELF`/`FLEX_SDK` to override a default.
 
