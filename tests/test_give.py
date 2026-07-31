@@ -326,6 +326,50 @@ def test_a_receipt_from_the_wrong_device_does_not_release_the_giver(two):
     assert b.get_info()["has_pressing"] is True
 
 
+def test_a_receipt_from_a_clone_does_not_erase_an_undelivered_copy(two):
+    """The receipt is built from what the taker *holds*, not from the transfer
+    in progress, so a device that already holds a copy of the same edition and
+    number can answer with that one while the ceremony has delivered nothing.
+    The committed recipient is right, the album and number are right, the
+    session MAC is right, and the copy still has to stay: what is missing is
+    the delivery, and the giver reads it off its own state machine. Erasing
+    here would hand the holder of a clone the power to destroy the original,
+    and with it the fork in the provenance chain that names the duplicate."""
+    a, b = two
+
+    # One copy, held twice: B honestly, A as a clone. A copy that reaches
+    # software can be cloned (docs/threat-model.md), which is the entry
+    # condition and the only thing the attacker needs.
+    priv, albpub = demo_album_key(TITLE, ARTIST, EDITION)
+    album = build_album_cert(priv, albpub, TITLE, EDITION, bytes(32), ARTIST)
+    album_id = hashlib.sha256(albpub).digest()
+    bearer_priv, bearer_pub = demo_bearer_key(TITLE, ARTIST, EDITION, 1)
+    pressing = build_pressing_cert(priv, album_id, 1, EDITION, bearer_pub)
+    provision_pressing(b, album, pressing, bearer_priv)
+    provision_pressing(a, album, pressing, bearer_priv)
+
+    # B's human approves the give to A, and the relay then simply never asks
+    # for the key: B stops at promised, and nothing has crossed to A.
+    run_pairing(b, a)
+    confirm_sas_both(b, a)
+    b.cmd(INS_GIVE_HANDOVER, a.cmd(INS_PRESS_REQUEST))
+    give_commit(b)
+    info = b.get_info()
+    assert info["committed"] is True
+    assert info["key_flown"] is False, "nothing was released, so nothing has flown"
+
+    # A acknowledges out of its own holding. Every field checks out.
+    receipt = a.cmd(INS_TAKE_RECEIPT)
+    assert b.cmd_sw(INS_GIVE_FINISH, receipt) == SW_BAD_STATE
+    info = b.get_info()
+    assert info["has_pressing"] is True, "a copy that never left must not be erased"
+    assert info["key_flown"] is False
+
+    # The promise is still B's to take back, and what comes back is the copy.
+    give_cancel(b)
+    verify_possession(b, b.cmd(0x40, p1=0))
+
+
 def test_a_taker_that_already_holds_a_copy_refuses_and_costs_nothing(two):
     """One copy per device, on this path as on every other. The taker is asked
     first, so it refuses while the giver still holds its copy outright and has

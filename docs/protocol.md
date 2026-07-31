@@ -297,10 +297,13 @@ and give another) from sharing a pad and publishing the XOR of two keys.
                     -> album_id(32) || number(2) || devpub(65) || mac(32)      [131]
 0x79 GIVE_FINISH    (giver, paired) data = the TAKE_RECEIPT reply -> ok        [131]
 ```
-Three more instructions exist only behind their own cargo features and are
+Four more instructions exist only behind their own cargo features and are
 absent from a default build: 0x61 ART_TEST (`artprobe`), 0x63 LIBRARY_PREVIEW
-and 0x65 CARD_PREVIEW (`uiprobe`). They are screen probes for captures and
-change nothing.
+and 0x65 CARD_PREVIEW (`uiprobe`), all three screen probes for captures, and
+0x69 FACTORY_PROBE (`factprobe`), one read-only call onto the OS's
+`os_factory_setting_get` syscall used to find out what, if anything, it hands
+an app. None of them changes device state, and none is part of the protocol:
+a build that answers anything but 0x6D00 to them is a development build.
 
 [UI] = blocks on an explicit user confirmation on the device screen, drawn
 over the library (the landing screen), which yields to the incoming APDU.
@@ -472,9 +475,15 @@ The giver's state machine. `committed` is one byte with three values, because
   commitment names one recipient and is never widened, which is the invariant
   that replaces the old "the giver holds nothing" one.
 - **GIVE_FINISH** consumes the receipt and erases everything in one
-  `Store::put`. Not gated: it completes an act already approved. It accepts
-  either committed state, being a resume path; a receipt at `promised` is
-  unreachable anyway, since the taker cannot hold a copy whose key never left.
+  `Store::put`. Not gated: it completes an act already approved. Refused unless
+  `committed == 2`. A receipt attests what the taker *holds*, never that this
+  transfer delivered it: a device holding a clone of the same album and number
+  answers `TAKE_RECEIPT` out of its own holding, with the right recipient and a
+  valid MAC, so a giver releasing at `promised` would erase a copy nobody
+  received. Delivery is read off the giver's own state machine instead, and
+  since `committed = 2` is written before the sealed key reaches the wire, no
+  taker can hold what a giver still at `promised` holds. It strands no resume:
+  a resume that needs the key runs `GIVE_OFFER p1=1` on the way.
 - The window where both devices hold the copy is real and deliberate. The
   giver's is already silent, so no verifier ever sees two holders.
 

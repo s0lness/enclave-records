@@ -424,19 +424,24 @@ pub fn handler_give_cancel(command: Command<'_>) -> Result<CommandResponse<'_>, 
 ///
 /// Not gated. It completes an act the human already approved, and a gate would
 /// put a human back on the path where an unanswered tap strands a copy. Refused
-/// unless the receipt names the copy this device holds and comes from the
-/// recipient it committed to, so no unrelated acknowledgement can be used to
-/// make a copy disappear.
+/// unless the key has flown, the receipt names the copy this device holds and
+/// it comes from the recipient it committed to, so no unrelated acknowledgement
+/// can be used to make a copy disappear.
 pub fn handler_give_finish<'a>(
     command: Command<'a>,
     session: &mut Session,
 ) -> Result<CommandResponse<'a>, AppSW> {
     let mut nvm = giver_ready(session)?;
-    // Promised or flown alike: this is a resume path, and which of the two the
-    // giver stopped in is not the receipt's business. A receipt at `promised`
-    // is unreachable anyway (the taker cannot hold a copy whose key never left),
-    // so accepting it costs nothing and refusing it could strand a copy.
-    if nvm.committed == 0 {
+    // Only from `flown`. A receipt attests what the taker holds, never that
+    // this transfer delivered it: a device holding a *clone* of the same album
+    // and number answers TAKE_RECEIPT out of that holding, under the committed
+    // recipient's own valid session, and a giver releasing on it would destroy
+    // the copy the clone was made from. Delivery is therefore read off this
+    // device. `committed = 2` is written before the sealed key reaches the
+    // wire, so no taker can have received what a giver still at `promised`
+    // holds, and no resume is stranded: a resume that needs the key runs
+    // GIVE_OFFER p1=1 and passes through this state on its way.
+    if nvm.committed != 2 {
         return Err(AppSW::BadState);
     }
     let data = command.get_data();
