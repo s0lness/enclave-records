@@ -52,6 +52,7 @@ from presse_client import (
     SW_NO_PRESSING,
     SW_OK,
     apdu_hex,
+    assert_back_rows_are_one_line,
     assert_page_fits,
     build_album_cert,
     build_pressing_cert,
@@ -75,6 +76,7 @@ from presse_client import (
     read_art,
     read_witness,
     row_labels,
+    row_value,
     run_give,
     run_pairing,
     run_press,
@@ -96,7 +98,7 @@ SW_BAD_CERT = "b103"
 
 # The back of the record, in order. Fixed: the page has room for four rows and
 # for no fifth, whatever the device holds.
-BACK_ROWS = ["Number", "Edition ID", "Device ID", "Learn more"]
+BACK_ROWS = ["Number", "Edition ID", "Provenance", "Learn more"]
 
 
 @pytest.fixture
@@ -600,6 +602,19 @@ def sealed_frame(giver: MitmEndpoint, bearer: bytes) -> bytes:
     return payload + giver.mac_send(INS_GIVE_OFFER, payload)
 
 
+def take_a_staged_copy(taker: Presse, giver: MitmEndpoint, hops: int = 0):
+    """Stage a relay-built copy and let it land: confirm, then accept.
+
+    `hops` is the trail the endpoint hands over, so the copy the taker ends up
+    holding stands at `hops + 1` -- the endpoint's own handover is the newest
+    one. This is how a copy that has changed hands more often than two emulators
+    can reach is put on a device in one step."""
+    bearer = stage_a_copy(taker, giver, hops=hops)
+    _, sw = taker.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
+    assert sw == SW_OK
+    taker.cmd(INS_TAKE_ACCEPT, sealed_frame(giver, bearer))
+
+
 def test_a_bearer_key_that_does_not_match_the_certificate_is_refused(two):
     """The check a lying relay cannot get past. Everything else is impeccable --
     valid MAC, valid certificates, valid handover, a human who said yes -- and
@@ -721,16 +736,28 @@ def open_row(p: Presse, label: str) -> int:
 
 
 def test_the_previous_holder_is_named_beside_who_holds_it_now(two):
-    """One step of provenance, on the page that already answers "which device
-    holds this record": who holds it now, and who handed it over. A copy that
-    came straight from a press says so, rather than leaving the reader to work
-    out what a missing line means."""
+    """One step of provenance, on the page the Provenance row opens: who holds it
+    now, and who handed it over. A copy that came straight from a press says so,
+    rather than leaving the reader to work out what a missing line means.
+
+    The device that holds it is named first and by fingerprint, one tap from the
+    envelope: it is the value a reader matches against another screen (a press's
+    "For device", a promised row's "reconnect", an empty library's own name), and
+    the page it now sits on is titled for the question it answers."""
     a, b = two
     press_one(a, b)
+    # Both names read before the card is opened. GET_INFO is an APDU, the card
+    # yields the screen to any APDU that arrives, and asking a device who it is
+    # while its own card is up therefore closes the page under the assertion.
+    a_fp = fingerprint(a.get_info()["devpub"])
+    b_fp = fingerprint(b.get_info()["devpub"])
 
     back_of_record(b)
-    since = open_row(b, "Device ID")
+    since = open_row(b, "Provenance")
+    assert "Provenance" in screen_texts_of(b, since), b.dev.screen_texts()[since:]
+    assert b.wait_for_text_since(b_fp, since), b.dev.screen_texts()[since:]
     assert b.wait_for_text_since("Pressed onto this device", since), b.dev.screen_texts()[since:]
+    assert_page_fits(b.dev, since)
     b.tap_text("Back", since=since)
     b.tap_text("Back")
 
@@ -739,11 +766,15 @@ def test_the_previous_holder_is_named_beside_who_holds_it_now(two):
 
     assert b.dev.wait_for_text(TITLE), b.dev.screen_texts()
     back_of_record(b)
-    since = open_row(b, "Device ID")
+    since = open_row(b, "Provenance")
+    assert "Provenance" in screen_texts_of(b, since), b.dev.screen_texts()[since:]
+    # Still the holder's own fingerprint at the top, then the device it came from.
+    assert b.wait_for_text_since(b_fp, since), b.dev.screen_texts()[since:]
     assert b.wait_for_text_since("the one handover", since), b.dev.screen_texts()[since:]
-    assert b.wait_for_text_since(fingerprint(a.get_info()["devpub"]), since), (
-        b.dev.screen_texts()[since:]
-    )
+    assert b.wait_for_text_since(a_fp, since), b.dev.screen_texts()[since:]
+    assert_page_fits(b.dev, since)
+    # And the way into the history is still the footer's right half.
+    open_row(b, "History")
 
 
 def test_the_back_of_the_record_is_four_rows_whatever_the_copy_has_been_through(two):
@@ -753,12 +784,19 @@ def test_the_back_of_the_record_is_four_rows_whatever_the_copy_has_been_through(
     wrap: it is drawn under the split footer with the tops of its glyphs showing
     above the rule, which reads as a rendering fault. A row that appears only
     for a copy that changed hands therefore breaks the page on exactly the
-    devices nobody checks, so both states are asserted here."""
+    devices nobody checks, so both states are asserted here.
+
+    The Provenance row is what moves with the copy, so its value is read in both
+    states too: a copy still on the device it was pressed onto, then one that has
+    been round the houses twice. The row carries the distance as a count, which
+    is what keeps a travelled copy inside four rows."""
     a, b = two
     press_one(a, b)
 
     since = back_of_record(b)
     assert row_labels(b.dev, since) == BACK_ROWS, b.dev.screen_texts()[since:]
+    assert row_value(b.dev, "Provenance", since) == "Pressed", b.dev.screen_texts()[since:]
+    assert_back_rows_are_one_line(b.dev, since)
     assert_page_fits(b.dev, since)
     b.tap_text("Back", since=since)
 
@@ -768,6 +806,8 @@ def test_the_back_of_the_record_is_four_rows_whatever_the_copy_has_been_through(
 
     since = back_of_record(b)
     assert row_labels(b.dev, since) == BACK_ROWS, "the back grew a row once the copy moved"
+    assert row_value(b.dev, "Provenance", since) == "2 hops", b.dev.screen_texts()[since:]
+    assert_back_rows_are_one_line(b.dev, since)
     assert_page_fits(b.dev, since)
 
 
@@ -778,20 +818,26 @@ def test_a_long_history_does_not_grow_the_page_that_carries_it(two):
     than merely clipping.
 
     Two hundred is past the thirty-two the old display ring could remember: the
-    chain has no such limit, so neither has the page."""
+    chain has no such limit, so neither has the page.
+
+    This is also the widest the Provenance row ever gets: the label plus a
+    three-digit count, right-aligned into a column that ends short of the
+    chevron. `label_value_row` drops its padding once the pair is already that
+    wide, so a row that outgrew the bar's 368px text area would wrap here first,
+    and a wrapped row is taller than the three beside it, which moves them. This
+    is the state that decided the row's wording: "201 handovers" measures 376px
+    and wraps, where "201 hops" stays inside the value column."""
     a, _ = two
-    giver = pair_as_giver(a)
-    bearer = stage_a_copy(a, giver, hops=200)
-    _, sw = a.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
-    assert sw == SW_OK
-    a.cmd(INS_TAKE_ACCEPT, sealed_frame(giver, bearer))
+    take_a_staged_copy(a, pair_as_giver(a), hops=200)
     assert a.get_info()["has_pressing"] is True
 
     since = back_of_record(a)
     assert row_labels(a.dev, since) == BACK_ROWS
+    assert row_value(a.dev, "Provenance", since) == "201 hops", a.dev.screen_texts()[since:]
+    assert_back_rows_are_one_line(a.dev, since)
     assert_page_fits(a.dev, since)
 
-    since = open_row(a, "Device ID")
+    since = open_row(a, "Provenance")
     assert a.wait_for_text_since("Where it came from", since), a.dev.screen_texts()[since:]
     assert a.wait_for_text_since("200 more", since), a.dev.screen_texts()[since:]
     assert_page_fits(a.dev, since)
@@ -1041,10 +1087,10 @@ def test_a_truncated_history_is_taken_here_and_only_a_comparison_catches_it(two)
 
 
 def history_page(p: Presse) -> int:
-    """Card -> back envelope -> Device ID -> History. Returns the index the
+    """Card -> back envelope -> Provenance -> History. Returns the index the
     history page's own elements start at."""
     back_of_record(p)
-    open_row(p, "Device ID")
+    open_row(p, "Provenance")
     return open_row(p, "History")
 
 
@@ -1138,13 +1184,13 @@ def test_the_words_appear_at_the_first_handover_and_name_the_hop_they_stand_for(
     makes it say something about this copy alone. The head is replayed here from
     the root through the link the copy really took, so the screen has to agree
     with the fold. The tag counts the handovers those words stand for: a head is
-    a moment of a copy, and the next handover replaces it."""
+    a moment of a copy, and the next handover replaces it.
+
+    One is also where the Provenance row turns singular, which is the only place
+    the row's wording can be wrong without a count being wrong with it."""
     a, _ = two
     giver = pair_as_giver(a)
-    bearer = stage_a_copy(a, giver)
-    _, sw = a.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
-    assert sw == SW_OK
-    a.cmd(INS_TAKE_ACCEPT, sealed_frame(giver, bearer))
+    take_a_staged_copy(a, giver)
 
     album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
     root = chain_genesis(album_id, 1)
@@ -1154,7 +1200,13 @@ def test_the_words_appear_at_the_first_handover_and_name_the_hop_they_stand_for(
     assert witness["chain"] == replayed, "the head is not the history it claims"
     assert replayed != root, "one handover left the head on the public root"
 
-    since = history_page(a)
+    back = back_of_record(a)
+    assert row_value(a.dev, "Provenance", back) == "1 hop", a.dev.screen_texts()[back:]
+    assert_back_rows_are_one_line(a.dev, back)
+    assert_page_fits(a.dev, back)
+
+    open_row(a, "Provenance")
+    since = open_row(a, "History")
     assert word_lines(a, since) == two_per_line(head_words(replayed)), (
         a.dev.screen_texts()[since:]
     )
@@ -1236,14 +1288,23 @@ def test_the_history_page_is_one_height_however_far_the_copy_has_travelled(two):
 def test_a_master_is_offered_no_history_to_compare(two):
     """A plate is never handed on, so its chain stays at the all-zero sentinel
     and eight words drawn from it would read the same on every device ever made.
-    A master's Device ID page therefore carries the plain Back footer and no way
-    into a history it does not have."""
+    A master's Provenance page therefore carries the plain Back footer and no way
+    into a history it does not have.
+
+    Its row says the same thing one level up. A plate is where it was made and
+    goes nowhere, so the row names the record: "0 hops" on a master would read as
+    a copy that has not moved yet."""
     a, _ = two
     a.cut(TITLE, EDITION, ARTIST)
     assert a.dev.wait_for_text(TITLE), a.dev.screen_texts()
 
-    back_of_record(a)
-    since = open_row(a, "Device ID")
+    back = back_of_record(a)
+    assert row_labels(a.dev, back) == BACK_ROWS, a.dev.screen_texts()[back:]
+    assert row_value(a.dev, "Provenance", back) == "Master", a.dev.screen_texts()[back:]
+    assert_back_rows_are_one_line(a.dev, back)
+    assert_page_fits(a.dev, back)
+
+    since = open_row(a, "Provenance")
     assert a.wait_for_text_since("Cut on this device", since), a.dev.screen_texts()[since:]
     assert not any(
         "History" in e.get("text", "") for e in current_screen(a.dev, since)

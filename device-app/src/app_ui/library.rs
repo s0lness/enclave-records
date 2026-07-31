@@ -380,10 +380,10 @@ pub const TOKEN_PRESSING: u8 = 1;
 /// clear of both the row range below and the control range above.
 pub const TOKEN_INFO_NUMBER: u8 = 240;
 pub const TOKEN_INFO_EDITION: u8 = 241;
-pub const TOKEN_INFO_DEVICE: u8 = 242;
+pub const TOKEN_INFO_PROVENANCE: u8 = 242;
 pub const TOKEN_LEARN_MORE: u8 = 243;
-/// The Device ID page's right-hand footer action, opening the history page. It
-/// is a footer and not a fifth row for a reason: the Device ID page's list area
+/// The Provenance page's right-hand footer action, opening the history page. It
+/// is a footer and not a fifth row for a reason: the Provenance page's list area
 /// is already full at two pairs, and the footer's bar exists whatever is on it.
 pub const TOKEN_INFO_HISTORY: u8 = 244;
 /// Control tokens, kept well clear of the row range.

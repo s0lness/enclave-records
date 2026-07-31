@@ -122,9 +122,18 @@ HEADER_TEXT_Y = 30
 FOOTER_RULE_Y = 504
 FOOTER_LABEL_Y = 534
 # Every label a footer bar can carry: the single-action footers, and the right
-# half of a split footer ("History" on the Device ID page; the record card's
+# half of a split footer ("History" on the Provenance page; the record card's
 # "< 1 of 2 >" pager is matched separately, on its " of ").
 FOOTER_LABELS = ("Back", "Quit", "History")
+
+# A back-envelope row is one left-aligned string inside a touchable bar, and
+# these bound it: the bar's text area runs from x=32 to the chevron, and one
+# line of it is 36px tall. Both measured on the emulator. NBGL wraps a string
+# too wide for that area, so an over-wide row shows up as a taller element (or
+# as a second one), and the right edge stays put either way.
+ROW_TEXT_LEFT = 32
+ROW_TEXT_RIGHT = 404
+ROW_LINE_H = 36
 
 
 def current_screen(dev, since: int = 0) -> list:
@@ -159,14 +168,46 @@ def assert_page_fits(dev, since: int = 0):
     assert not spilled, f"drawn under the footer (rule at y={FOOTER_RULE_Y}): {spilled}"
 
 
-def row_labels(dev, since: int = 0) -> list:
-    """The label of each list row on the page: the text left of the value
-    column, which `label_value_row` pads out with spaces."""
+def list_rows(dev, since: int = 0) -> list:
+    """The drawn elements of the page's list: everything but the header and the
+    footer's own labels."""
     return [
-        e["text"].split("  ")[0].strip()
+        e
         for e in current_screen(dev, since)
         if e["y"] != HEADER_TEXT_Y and not is_footer_label(e)
     ]
+
+
+def row_labels(dev, since: int = 0) -> list:
+    """The label of each list row on the page: the text left of the value
+    column, which `label_value_row` pads out with spaces."""
+    return [e["text"].split("  ")[0].strip() for e in list_rows(dev, since)]
+
+
+def row_value(dev, label: str, since: int = 0):
+    """The value half of one back-envelope row: the text `label_value_row` pushed
+    to the right of `label`. None when no row carries that label."""
+    for e in list_rows(dev, since):
+        head, sep, tail = e["text"].partition("  ")
+        if sep and head.strip() == label:
+            return tail.strip()
+    return None
+
+
+def assert_back_rows_are_one_line(dev, since: int = 0):
+    """Every row of the back envelope drawn on a single line, inside the bar.
+
+    For the back envelope only: a tag/value page wraps its values by design and
+    they run wider than a bar's text area. A row's label and value are one
+    string, so a value the column cannot hold wraps, and a wrapped row is taller
+    than the others. Nothing reports it and the text reads correctly in the OCR
+    either way; what it costs is the row below, pushed toward the footer until
+    the last one no longer clears it."""
+    rows = list_rows(dev, since)
+    wrapped = [e for e in rows if e["h"] > ROW_LINE_H or "\n" in e.get("text", "")]
+    assert not wrapped, f"a row wrapped (one line is {ROW_LINE_H}px): {wrapped}"
+    past = [e for e in rows if e["x"] < ROW_TEXT_LEFT or e["x"] + e["w"] > ROW_TEXT_RIGHT]
+    assert not past, f"a row left the bar's text area ({ROW_TEXT_LEFT}..{ROW_TEXT_RIGHT}): {past}"
 
 
 class Presse:

@@ -54,9 +54,10 @@ fn edition_id(albpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, AppSW>
     Ok(fingerprint_str(&fp))
 }
 
-/// The first 8 hex chars of SHA256(devpub): the device's public identity, shown
-/// as "Device ID" (the device that physically holds this record). The same
-/// fingerprint a press is addressed to ("For device ...").
+/// The first 8 hex chars of SHA256(devpub): the device's public identity, the
+/// device that physically holds this record. The same fingerprint a press is
+/// addressed to ("For device ..."), the "Device ID" an empty library prints,
+/// and the first pair of a record's Provenance page.
 fn device_id(devpub: &[u8; crate::crypto::PUBKEY_LEN]) -> Result<String, AppSW> {
     let hash = crate::crypto::sha256(&[devpub])?;
     let mut fp = [0u8; 4];
@@ -135,8 +136,10 @@ const ROW_TITLE_MAX_PX: u16 = 300;
 /// enough spaces that the value's right edge lands near `right_px`, so the
 /// values line up in a column just left of the chevron. Padded with real spaces
 /// (the bar's text is a single left-aligned string; NBGL keeps interior runs of
-/// spaces), and the target is kept short of the text area so the row can never
-/// wrap. Measured with the SDK metrics so the column holds whatever the value.
+/// spaces), and the target is kept short of the text area so a padded row can
+/// never wrap. Measured with the SDK metrics so the column holds whatever the
+/// value. A pair already wider than `right_px` is handed back as it stands, so
+/// see [`ROW_VALUE_RIGHT_PX`] for what that leaves the caller to guarantee.
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 fn label_value_row(
     label: &str,
@@ -160,8 +163,15 @@ fn label_value_row(
 }
 
 /// Where the value column's right edge sits on the back-of-record rows: short
-/// of the ~372px text area (416 inner, less the chevron and its interval) so a
-/// padded row never wraps, and clear enough of the chevron to read as a column.
+/// of the 368px text area (`AVAILABLE_WIDTH` 416, less the chevron's 32 and one
+/// `BAR_INTERVALE` of 16) so a padded row never wraps, and clear enough of the
+/// chevron to read as a column.
+///
+/// The margin protects the padding. The pair itself is unguarded:
+/// `label_value_row` stops padding once the label and value are already this
+/// wide and hands the raw pair through, so a value long enough to pass 368 on
+/// its own wraps, grows the bar, and moves every row under it. Every value put
+/// in a row has to be bounded where it is built.
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 const ROW_VALUE_RIGHT_PX: u16 = 344;
 
@@ -217,8 +227,8 @@ struct CardData {
     /// The copy number for a pressing; `None` for a master (a plate, not a copy).
     number: Option<u16>,
     edition_id: String,
-    /// The fingerprint of the device holding this record, shown as the
-    /// "Device ID" on the back of the card.
+    /// The fingerprint of the device holding this record, shown as the first
+    /// pair of the record's Provenance page.
     device_id: String,
     /// The album id, used to generate the fallback cover when no verified
     /// sleeve is stored.
@@ -236,12 +246,14 @@ struct CardData {
     /// How many times this copy has changed hands. Zero for a copy still on
     /// the device it was pressed onto, and for a master.
     ///
-    /// Two pages read it. The Device ID page states the holders behind the one
-    /// it names (`hops - 1`) as a bare count: the proof of them is the chain
-    /// digest, which no screen can read out as a list of names, and a list that
-    /// grows with every hop eventually runs off the bottom edge. The history
-    /// page reads it to know whether the head is still the public root every
-    /// copy of this number shares.
+    /// Three screens read it. The back-of-record row states it as the copy's
+    /// distance travelled, which is the whole of what that row advertises. The
+    /// Provenance page states the holders behind the one it names (`hops - 1`)
+    /// as a bare count: the proof of them is the chain digest, which no screen
+    /// can read out as a list of names, and a list that grows with every hop
+    /// eventually runs off the bottom edge. The history page reads it to know
+    /// whether the head is still the public root every copy of this number
+    /// shares.
     hops: u8,
     /// The first [`HEAD_WORDS`] bytes of the provenance chain head, which the
     /// history page renders as words once the copy has moved.
@@ -312,16 +324,16 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
 enum Page {
     /// The cover, with the big `#N` numeral and the title + artist.
     Card,
-    /// The back-envelope info: the number, the Edition ID, the Device ID, and a
-    /// "Learn more" row, each opening a sub-page.
+    /// The back-envelope info: the number, the Edition ID, the provenance, and
+    /// a "Learn more" row, each opening a sub-page.
     Back,
     /// "#N of M", explained: what the numbering means and the sealed counter.
     InfoNumber,
     /// The Edition ID, explained: what it is and how to confirm it.
     InfoEdition,
-    /// The Device ID, explained: the device that holds the record, and where it
-    /// came from before that.
-    InfoDevice,
+    /// How far the copy has travelled: the device that holds it now, named by
+    /// fingerprint, and where it came from before that.
+    InfoProvenance,
     /// The provenance head as eight words: the copy's whole history in a form
     /// two people can read to each other.
     InfoHistory,
@@ -347,8 +359,8 @@ fn pair(
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit, AppSW> {
     use crate::app_ui::library::{
-        pager_label, run_event_loop, Layout, ScreenArena, TOKEN_BACK, TOKEN_INFO_DEVICE,
-        TOKEN_INFO_EDITION, TOKEN_INFO_HISTORY, TOKEN_INFO_NUMBER, TOKEN_LEARN_MORE, TOKEN_PAGER,
+        pager_label, run_event_loop, Layout, ScreenArena, TOKEN_BACK, TOKEN_INFO_EDITION,
+        TOKEN_INFO_HISTORY, TOKEN_INFO_NUMBER, TOKEN_INFO_PROVENANCE, TOKEN_LEARN_MORE, TOKEN_PAGER,
     };
     use ledger_secure_sdk_sys::nbgl_contentTagValue_t;
 
@@ -410,10 +422,37 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             // `label_value_row`); "Learn more" is an action row and has none.
             let vfont = ledger_secure_sdk_sys::BAGL_FONT_INTER_SEMIBOLD_28px;
             let row = |label, value| label_value_row(label, value, vfont, ROW_VALUE_RIGHT_PX);
+            // The third row says how far the copy has travelled, so the
+            // envelope advertises the question the page behind it answers. A
+            // master is a plate and is never handed on; a copy still on the
+            // device it was pressed onto has moved no further than the press.
+            // Past that the row counts the hops, exactly, at every value a
+            // `u8` holds.
+            //
+            // The row says "hop" where the page below it and the history page
+            // both say "handover", and the reason is measured. A bar's text
+            // area is 368px (`AVAILABLE_WIDTH` 416, less the chevron's 32 and
+            // one `BAR_INTERVALE` of 16); the label takes ~155 of it and the
+            // gap 16, leaving a value ~173px inside the column and ~197 before
+            // the bar wraps. "handovers" alone measures 144px, room for one
+            // digit: "99 handovers" renders at 363px, outside the column, and
+            // "100 handovers" wraps to two lines, which grows the bar and
+            // pushes every row under it toward the footer. "hops" is four
+            // characters, so "255 hops" measures 344 and the count stays exact
+            // at every distance. Rounding the count to fit ("9+ handovers")
+            // would put an approximation on the envelope over a page that
+            // states the figure exactly, which a provenance screen must never
+            // do.
+            let travelled = match (card.number, card.hops) {
+                (None, _) => String::from("Master"),
+                (_, 0) => String::from("Pressed"),
+                (_, 1) => String::from("1 hop"),
+                (_, n) => format!("{} hops", n),
+            };
             let rows: [(String, u8); BACK_ROWS] = [
                 (row("Number", &number_line), TOKEN_INFO_NUMBER),
                 (row("Edition ID", &card.edition_id), TOKEN_INFO_EDITION),
-                (row("Device ID", &card.device_id), TOKEN_INFO_DEVICE),
+                (row("Provenance", &travelled), TOKEN_INFO_PROVENANCE),
                 (String::from("Learn more"), TOKEN_LEARN_MORE),
             ];
             for (text, token) in rows {
@@ -467,8 +506,13 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             layout.tag_value_list(&pairs);
             layout.footer(cstr(String::from("Back")), TOKEN_BACK);
         }
-        Page::InfoDevice => {
-            layout.header(cstr(String::from("Device ID")), core::ptr::null());
+        Page::InfoProvenance => {
+            layout.header(cstr(String::from("Provenance")), core::ptr::null());
+            // Who holds it now, first. The fingerprint is the one fact on this
+            // page a reader can check against another screen (the "For device"
+            // of a press, the "reconnect" of a promised row, the empty
+            // library's own name), so it stays one tap from the envelope, on
+            // the page whose question it half answers.
             pairs.push(pair(
                 cstr(card.device_id.clone()),
                 cstr(String::from(
@@ -482,8 +526,12 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             // than leaving the reader to guess what an absent row means.
             //
             // Two pairs and never more, and this one runs to four lines of
-            // value: the last line this page can render starts at y=468, and
-            // the fifth would land under the footer. A trail that grows a line
+            // value, which puts the page at its ceiling. Measured: the tags
+            // land at y=120 and y=292, the first pair's three lines at
+            // 160/196/232 and this one's four at 332/368/404/440. Seven value
+            // lines is all two pairs hold, because the last line a page can
+            // render starts at y=468 and an eighth would start at 476 and be
+            // drawn under the footer's rule. A trail that grows a line
             // per hop passes that, then passes the bottom of the screen, which
             // faults the draw rather than merely clipping it. Hence a count of
             // the earlier holders and not their names: unsigned either way, and
@@ -660,8 +708,8 @@ pub fn show_record_card(kind: RecordKind) -> Result<(), AppSW> {
 #[cfg(any(target_os = "stax", target_os = "flex"))]
 fn card_loop(card: &CardData) -> Result<(), AppSW> {
     use crate::app_ui::library::{
-        Exit, TOKEN_BACK, TOKEN_INFO_DEVICE, TOKEN_INFO_EDITION, TOKEN_INFO_HISTORY,
-        TOKEN_INFO_NUMBER, TOKEN_LEARN_MORE, TOKEN_PAGER,
+        Exit, TOKEN_BACK, TOKEN_INFO_EDITION, TOKEN_INFO_HISTORY, TOKEN_INFO_NUMBER,
+        TOKEN_INFO_PROVENANCE, TOKEN_LEARN_MORE, TOKEN_PAGER,
     };
 
     let mut page = Page::Card;
@@ -670,17 +718,17 @@ fn card_loop(card: &CardData) -> Result<(), AppSW> {
             Exit::Apdu => return Ok(()),
             Exit::Touched(TOKEN_BACK) => match page {
                 // Back retraces the way in: the history sits one level under
-                // the Device ID page, every other sub-page under the back
+                // the Provenance page, every other sub-page under the back
                 // envelope, and the card and the back leave for the library.
-                Page::InfoHistory => page = Page::InfoDevice,
-                Page::InfoNumber | Page::InfoEdition | Page::InfoDevice | Page::LearnMore => {
+                Page::InfoHistory => page = Page::InfoProvenance,
+                Page::InfoNumber | Page::InfoEdition | Page::InfoProvenance | Page::LearnMore => {
                     page = Page::Back
                 }
                 _ => return Ok(()),
             },
             Exit::Touched(TOKEN_INFO_NUMBER) => page = Page::InfoNumber,
             Exit::Touched(TOKEN_INFO_EDITION) => page = Page::InfoEdition,
-            Exit::Touched(TOKEN_INFO_DEVICE) => page = Page::InfoDevice,
+            Exit::Touched(TOKEN_INFO_PROVENANCE) => page = Page::InfoProvenance,
             Exit::Touched(TOKEN_INFO_HISTORY) => page = Page::InfoHistory,
             Exit::Touched(TOKEN_LEARN_MORE) => page = Page::LearnMore,
             Exit::Touched(TOKEN_PAGER) => {
@@ -1119,7 +1167,7 @@ pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>,
         sleeve_verified: false,
         slot: crate::state::SLOT_MASTER,
         // A pressing that has travelled, because that is the tall variant of
-        // both pages the probe exists to film: the Device ID page grows a
+        // both pages the probe exists to film: the Provenance page grows a
         // sentence for the holders behind the named one, and the history page
         // carries the eight words only once the copy has moved. A master is
         // built as a plate really is, cut here and never handed on, so its

@@ -126,8 +126,8 @@ def test_front_of_card_shows_title_and_artist(device):
 
 
 def test_back_of_record_lists_the_envelope_info(device):
-    """The back of the record is the envelope info, one (i) row per fact: the
-    number ("#0 of 5" for a master), the Edition ID, the Device ID, and a
+    """The back of the record is the envelope info, one row per fact: the
+    number ("#0 of 5" for a master), the Edition ID, the Provenance, and a
     Learn more row. No "Copy" tag, and the artist is not repeated here (it lives
     on the front)."""
     p = Presse(device)
@@ -136,7 +136,7 @@ def test_back_of_record_lists_the_envelope_info(device):
     open_card_pages(device, p)
     assert device.wait_for_text("#0 of 5"), device.screen_texts()  # master is #0
     assert device.wait_for_text("Edition ID"), device.screen_texts()
-    assert device.wait_for_text("Device ID"), device.screen_texts()
+    assert device.wait_for_text("Provenance"), device.screen_texts()
     assert device.wait_for_text("Learn more"), device.screen_texts()
     p.tap_text("Back")
 
@@ -153,21 +153,29 @@ def test_edition_id_info_opens_its_page(device):
     assert device.wait_for_text("How to verify"), device.screen_texts()
     assert device.wait_for_text("official channels"), device.screen_texts()
     p.tap_text("Back")  # sub-page -> back of record
-    assert device.wait_for_text("Device ID"), device.screen_texts()
+    assert device.wait_for_text("Provenance"), device.screen_texts()
 
 
-def test_device_id_info_opens_its_page(device):
-    """Tapping the Device ID (i) row opens its sub-page: the fingerprint of the
-    device that holds the record, and where the record came from. A master was
-    cut here and is never handed on, so that is what its page says."""
+def test_provenance_info_opens_its_page(device):
+    """Tapping the Provenance row opens its sub-page, and the page is titled for
+    what it answers: the fingerprint of the device that holds the record, then
+    where the record came from. A master was cut here and is never handed on, so
+    that is what its page says.
+
+    The fingerprint is the page's first pair, one tap from the envelope: it is
+    the value a reader matches against another screen, and the envelope's own
+    row is spent on where the copy has been."""
     p = Presse(device)
     p.cut(TITLE, EDITION, ARTIST)
     assert device.wait_for_text(TITLE)
     open_card_pages(device, p)
     since = len(device.events())
-    p.tap_text("Device ID")
+    p.tap_text("Provenance")
     assert p.wait_for_text_since("Where it came from", since), device.screen_texts()[since:]
     assert p.wait_for_text_since("Cut on this device", since), device.screen_texts()[since:]
+    texts = [e.get("text", "") for e in current_screen(device, since)]
+    assert "Provenance" in texts, texts  # the header, exactly
+    assert any("The fingerprint of this device" in t for t in texts), texts
     assert_page_fits(device, since)
     p.tap_text("Back", since=since)
     assert device.wait_for_text("Edition ID"), device.screen_texts()
