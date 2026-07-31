@@ -27,6 +27,9 @@ thesis (physical editions of digital works, no chain, no server).
   Ledger-as-trust-root. Never restore the claim that a Ledger app cannot prove it
   is a Ledger. The README carries only a
   summary and links here.
+- `docs/speculos-nvm-loading.md` - the upstream bug report for the Speculos
+  loader defect described under Gotchas, with the measurement, the mechanism
+  and the fix this repo vendors. Nothing has been filed on GitHub.
 - `CEREMONIE-VIDEO.md` - runbook for the filmed ceremony on the two real Flexes
   (French), with the header table naming the build actually flashed. Driven by
   `scripts/preflight.sh` (read-only pre-flight), `scripts/ceremony.sh` (the live
@@ -36,7 +39,9 @@ thesis (physical editions of digital works, no chain, no server).
   root from its own path, so every script acts on the checkout it lives in),
   `build.sh`, `load.sh`, `test.sh`, `boottest.sh`, `emu-up.sh`/`emu-down.sh`,
   `cockpit.sh`, `rehearse-emu.sh`, `ceremony.sh`, `give.sh`, `preflight.sh`,
-  `install-ca.sh`, `list-apps.sh`, `sleeve.py`. `build-video.sh` and
+  `install-ca.sh`, `list-apps.sh`, `sleeve.py`, plus `patch-speculos.sh` and
+  `speculos-nvm-data.patch`, which fix the emulator (see Gotchas).
+  `build-video.sh` and
   `load-video.sh` are aliases of `build.sh`/`load.sh`, kept because the runbook
   calls them by those names. `scripts/dev/` is development archaeology (NVM
   ceiling and art sweeps, SDK symbol dumps, screen captures, `tap.sh`,
@@ -122,10 +127,12 @@ value fingerprints a device's key, and the label has to say so.
 - Development screen probes are off by default, behind their own cargo features:
   `artprobe` (ART_TEST and the raw `Screen`/`nbgl_screenPush` path behind it,
   which `scripts/dev/art-test.sh` and `dev/show-sleeve.sh` drive) and `uiprobe`
-  (LIBRARY_PREVIEW, CARD_PREVIEW; capture only). Two and not one because
-  `--features artprobe,uiprobe` lands at `text` 77104, outside the boot window;
-  each alone boots (76080 and 75568). Build with `build.sh -- --features
-  artprobe`. A third, `factprobe`, is not a screen probe: it is FACTORY_PROBE
+  (LIBRARY_PREVIEW, CARD_PREVIEW; capture only). Two features and not one
+  because they drive different things and a capture usually wants one of them.
+  The reason previously recorded here, that `--features artprobe,uiprobe`
+  landed outside a boot window, was the Speculos loader bug and holds no more:
+  build them together freely. Build with `build.sh -- --features artprobe`.
+  A third, `factprobe`, probes the OS rather than a screen: FACTORY_PROBE
   (0x69), one APDU onto the `os_factory_setting_get` syscall, whose id space is
   documented nowhere public. It reads only and answers verbatim, with the output
   buffer poisoned to 0xA5 first (Speculos does not implement that syscall: it
@@ -133,37 +140,75 @@ value fingerprints a device's key, and the label has to say so.
   like a successful run of zeros) and the call wrapped in its own BOLOS try
   context (an id the OS refuses throws, and an uncaught throw exits the app,
   which on hardware costs a physical relaunch). `id 0xDEADBEEF` throws on
-  purpose to prove the catch works before a sweep leans on it. Alone it lands at
-  `text` 75568, boot-checked 6x. Driver: `scripts/dev/factory-sweep.py`.
-- `.nvm_data` is nearly full: `data_size` is 18432 and the app stops booting
-  somewhere between 18432 and 19456. Re-run the boot check after *any* NVM struct
-  change, or the app installs and dies without a message. (It read 18944 until the
-  provenance chain replaced the 129-byte display ring with a 65-byte head + hop
-  count, which freed 64 bytes of `PresseNvm` and dropped `data_size` one 512-byte
-  step with `text` unmoved.)
-- From the code side it is a **window, not a ceiling**, and this is the single
-  most misleading thing about this app. With the current NVM structs the app
-  boots for a `text` anywhere in **74032..76080** and dies outside it *in both
-  directions*: 76592 fails, and so does 73520. Measured by sweeping an inert
-  `#[used]` ballast array in 512-byte steps (`text` moves in 512s, `.rodata` is
-  512-aligned), each point boot-checked 3x. So **deleting code can break the
-  app**, and a diet that frees more than about 2 KB has to be paid back or it
-  lands under the floor. `data_size` is not an independent knob here: it is
-  derived from the same link layout (`_envram_data - _nvram_data`) and moves with
-  `text` -- the ballast sweep walked it from 18432 to 18944 across the window --
-  so the old "the ceiling is at `data_size` 18944" was this same phenomenon seen
-  from the other side. Which pair goes with which depends on the NVM structs of
-  the day, so read both numbers off the build rather than inferring one from the
-  other: the current build reports `text` 74544 *with* `data_size` 18432. **The
-  74032..76080 edges were swept against the NVM structs that predate the
-  provenance chain**, so treat them as a guide and not as measured for today's
-  layout; the points verified against the current structs are 74032 and 74544,
-  each 3x boot-checked and both at `data_size` 18432 (the history page cost one
-  512-byte `.rodata` step and moved no NVM struct at all). The
-  failure is silent either way: the app installs, panics before its first APDU
-  (`exiting_panic` -> `exit_app(0)`, which the Speculos log shows as
-  `exit called (0)`) and answers nothing. Read `text` from the build output and
-  boot-check every change that moves it.
+  purpose to prove the catch works before a sweep leans on it. Boot-checked 6x.
+  Driver: `scripts/dev/factory-sweep.py`.
+- **Space is not a constraint on this app.** The per-app flash region is
+  **400 KiB** (`$FLEX_SDK/target/flex/script.ld`: `FLASH (rx) : ORIGIN =
+  0xc0de0000, LENGTH = 400K`). Today's build spans `_text` to `_nvram_end`,
+  83870 bytes, about **20%** of it, of which `.nvm_data` is 7582. Add code, grow
+  an NVM struct, cut 20 KB: none of it approaches an edge. The `data_size`
+  cargo-ledger prints is `_envram_data - _nvram_data`, and `_nvram_data` sits at
+  the start of `.rodata`, so that number folds read-only data into what reads
+  like an NVM figure. The NVM usage to look at is the size of `.nvm_data`.
+- **The Speculos loader drops most of `.nvm_data`, and that is what every old
+  "boot ceiling" number was measuring.** Stock Speculos sizes the app's mapping
+  from the `PT_LOAD` that holds `.text` (`speculos/main.py:92`,
+  `ei.text_size = text_seg['p_filesz']`) and `src/launcher.c:361` maps one spare
+  page past it. `.nvm_data` is a separate `PT_LOAD`, so the bytes of it that
+  reach emulated memory are `4096 + ((-load_size) mod 4096)`, between 4096 and
+  7680, against a `.nvm_data` of 7582. `presse::state::DATA` sits at offset
+  **4096** (`ART_MASTER` and `ART_PRESSING`, 2048 each, link ahead of it), so
+  when `load_size` is a multiple of 4096 both `SafeStorage` 0xa5 flags land
+  outside the mapping, read 0, and `AtomicStorage::which()` panics
+  (`ledger_device_sdk-1.36.0/src/nvm.rs:226`, reached from
+  `device-app/src/state.rs`). The app installs, exits before its first APDU
+  (`exiting_panic` -> `exit_app(0)`, `exit called (0)` in the log) and answers
+  nothing. **Physical Flexes are unaffected**: `presse.hex` covers the whole
+  region including both flags.
+  - `load_size` is the `p_filesz` of that segment, `_erodata - _text`. It is
+    **not** the `text` cargo-ledger prints, which omits the padding the linker
+    puts between `.rel_flash` and `.rodata` (208 bytes today, since `.rel_flash`
+    pads 2352 up to 2560). That padding moves with the relocation count, so the
+    failing sizes move too. Gate on `load_size`, never on `text`.
+  - `scripts/patch-speculos.sh` fixes the emulator, applying
+    `scripts/speculos-nvm-data.patch` to the speculos in `~/venv-ledger`. It is
+    idempotent, `env.sh` re-applies it on every source, and `pip install -U
+    speculos` is the one thing that puts the bug back. `--check` reports,
+    `--revert` undoes.
+  - `presse_check_load_size` (in `env.sh`, called by `build.sh` and
+    `boottest.sh`) fails the build when `load_size % 4096 == 0`, so a binary
+    that would die on someone else's stock emulator never leaves quietly.
+    `ALLOW_NVM_NOTCH=1` to override.
+- **`storage_b` has never run, in any test, ever.** Even at sizes that boot,
+  stock Speculos loads only part of `.nvm_data`. When `load_size mod 4096` is
+  3584, just 4608 bytes arrive, so the second `SafeStorage` flag at offset 5376
+  reads 0 and the app runs on `storage_a` alone, with the tearing-recovery copy
+  silently absent. `install_parameters`, at offset 7168, is missing from seven
+  residues out of eight for the same reason. Everything past the boundary is
+  zero, so nothing shows. The redundancy behind "a power cut burns a number and never duplicates
+  one" has therefore never been exercised: **any test that believes it is
+  covering the B storage is currently testing nothing.** The loader patch is
+  what makes such a test possible; writing one is still open work.
+- Someone will propose **emitting `DATA` first inside `.nvm_data`** as a cheaper
+  fix than patching the loader. The price is high and the hazard survives it.
+  The current order (`ART_MASTER`, `ART_PRESSING`, `DATA`) is chosen by compiler
+  emission and is the reverse of the source order, so controlling it needs a
+  distinct input section, a split of the `*(.nvm_data*)` glob in `link.ld`
+  (which lives in the `ledger_secure_sdk_sys` crate, so vendor or patch that
+  too), a build-time assertion that the offset really is 0, and the art tests
+  re-run at all eight residues. It also only holds while `DATA` stays under
+  4096 bytes. Worth having as defence in depth one day, at that price.
+- **Numbers in the history to disbelieve.** Commit messages, `docs/art/README.md`
+  and a comment in `device-app/src/state.rs` still carry these, and every one is
+  an artifact of the loader bug above: a boot "window" of `text` 74032..76080
+  that killed the app in both directions; an `.nvm_data` ceiling somewhere
+  between 18432 and 19456; "deleting code can break the app"; two 160-wide
+  sleeves dying in every arrangement tried; `--features artprobe,uiprobe` being
+  unbuildable. What failed was every size whose `load_size` fell on a 4096-byte
+  boundary. That is also why the edges looked soft and why `text` 76592, once
+  recorded as failing, boots 3/3 today: 208 bytes of linker padding move with
+  the relocation count, so the same `text` maps onto a different `load_size`
+  from one build to the next. Do not re-derive any of it from the history.
 - **Screens do not scroll, and overrunning one is silent.** Flex is 480x600 with
   the header's rule at y=96 and the footer's at y=504, so a page has 408px: four
   92px touchable bars, or a tag/value list whose last renderable line starts at
@@ -177,3 +222,17 @@ value fingerprints a device's key, and the label has to say so.
   the album cert's `sleeve_hash`. No separate seal step. `scripts/sleeve.py` packs a
   cover into the exact 1bpp bytes; the device inverts polarity at render time only
   (canonical bytes are white-on-black and are what the hash covers). See docs/protocol.md.
+- **`ART_W = 128` stands on the cell rule alone.** The art is written in
+  64-byte cells, so `ART_W * ART_W / 8` has to divide by 64; that is what rules
+  out every width between 128 and 160, and it is a real constraint (a width
+  that fails it leaves `ART_CELLS * ART_CHUNK` short of `ART_LEN` and every
+  `Art::get` runs off the end). The second reason on record in
+  `device-app/src/state.rs` and `docs/art/README.md`, that two 160-wide slots
+  produce an app that exits before its first APDU "in every arrangement tried",
+  was the Speculos loader: 160-wide slots push `DATA` to offset 6400 in
+  `.nvm_data`, past most of the 4096..7680 the emulator maps, so its flags fall
+  outside for most load sizes whatever the arrangement, and the second flag
+  falls outside for all of them. Flash has
+  room for 160 and always did. Keep 128 unless something asks for more, and if
+  something does, re-run the art tests and a boot check on a patched emulator
+  rather than treating the old failure as evidence.

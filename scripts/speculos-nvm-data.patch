@@ -1,0 +1,43 @@
+Load the whole of a Rust app's .nvm_data into emulated memory.
+
+Speculos sizes the app's mapping from the PT_LOAD segment that contains .text
+(main.py, `ei.text_size = text_seg['p_filesz']`). For a Rust app built with the
+Ledger SDK, .nvm_data is a *separate* PT_LOAD, so it is outside that size.
+src/launcher.c then maps one spare page past it:
+
+    code = mmap(LOAD_ADDR, size + page_size, PROT_READ | PROT_EXEC,
+                MAP_PRIVATE | MAP_FIXED, app->fd, app->elf.load_offset);
+
+The mapping is page-granular, so the number of .nvm_data bytes that reach the
+emulator is 4096 + ((-p_filesz) mod 4096): between 4096 and 7680, whatever the
+section's real size. Everything past that reads as unset memory. An app whose
+`AtomicStorage` has both `SafeStorage` validity flags beyond the boundary hits
+`panic!("invalidated atomic storage")` in ledger_device_sdk's nvm.rs before it
+answers its first APDU, and the app just exits.
+
+This extends the mapped size to the end of .nvm_data. See
+docs/speculos-nvm-loading.md for the measurement and the upstream report.
+
+Applied by scripts/patch-speculos.sh against the speculos in $HOME/venv-ledger.
+Written against speculos 0.26.10.
+
+--- a/speculos/main.py
++++ b/speculos/main.py
+@@ -89,7 +89,17 @@
+         symtab_section = elf.get_section_by_name('.symtab')
+         bss_section = elf.get_section_by_name('.bss')
+         ei.text_offset = text_seg['p_offset']
+         ei.text_size = text_seg['p_filesz']
++        # PRESSE-SPECULOS-NVM-PATCH (scripts/patch-speculos.sh, docs/speculos-nvm-loading.md)
++        # The PT_LOAD holding .text stops where .nvm_data begins, and
++        # src/launcher.c maps a single spare page past it, so a Rust app gets
++        # between 4096 and 7680 bytes of its .nvm_data in emulated memory and
++        # never the rest. An AtomicStorage whose two validity flags both land
++        # past that boundary reads 0 and panics before the first APDU.
++        nvm_section = elf.get_section_by_name('.nvm_data')
++        if nvm_section is not None:
++            nvm_end = nvm_section['sh_offset'] + nvm_section['sh_size']
++            ei.text_size = max(ei.text_size, nvm_end - ei.text_offset)
+         ei.text_addr = text_section['sh_addr']
+         ei.stack_addr = bss_section['sh_addr']
+         sym_estack = symtab_section.get_symbol_by_name('_estack')

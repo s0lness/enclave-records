@@ -1,7 +1,14 @@
 #!/bin/bash
-# Pin the exact app-NVRAM ceiling by growing the art region itself (live code,
-# so nothing gets garbage-collected by the linker). Argument = art bytes,
-# which must be a multiple of ART_CHUNK (64). Reports data_size + boot.
+# Grow the art region itself (live code, so nothing gets garbage-collected by
+# the linker). Argument = art bytes, which must be a multiple of ART_CHUNK
+# (64). Reports data_size + boot.
+#
+# Kept as archaeology. The "app-NVRAM ceiling" it was built to pin does not
+# exist: the per-app region is 400 KiB (~20% used) and the boot failures it
+# measured were the Speculos loader dropping most of .nvm_data, fixed by
+# scripts/patch-speculos.sh (docs/speculos-nvm-loading.md). `data_size` is
+# `_envram_data - _nvram_data` with `_nvram_data` at the start of .rodata, so
+# it is not an NVM measurement either.
 source "$(dirname "$0")/../env.sh"
 STATE="$APP_DIR/src/state.rs"
 cp "$STATE" /tmp/state.rs.ceil.bak

@@ -19,16 +19,17 @@ Everything here is produced by `scripts/sleeve.py`.
 | length | **2048 bytes**, no header, no palette |
 | polarity | bit `1` = white (lit), `0` = black |
 
-128 is fixed, not a preference. The device keeps **one art slot per record it
-can hold**, a master and a pressing, because each sleeve is checked against the
-hash signed into its own album certificate; a single shared region means the
-second cut invalidates the first record's cover. Two slots cost twice the
-bytes, and past a certain `data_size` the loader accepts the app but it exits
-before serving its first APDU: measured on Speculos, 18432 boots and 19456 does
-not, so two 160-wide sleeves (19968) never boot and two 128-wide ones (17408)
-do. The edge must also be a multiple of 32, because the device writes the art
-in 64-byte cells and `N*N/8` therefore has to divide by 64, which rules out
-every value between 128 and 160. `--size 160` and `--size 192` still work for
+128 is fixed. The device keeps **one art slot per record it can hold**, a
+master and a pressing, because each sleeve is checked against the hash signed
+into its own album certificate; a single shared region means the second cut
+invalidates the first record's cover. The edge must be a multiple of 32,
+because the device writes the art in 64-byte cells and `N*N/8` therefore has to
+divide by 64, which rules out every value between 128 and 160. That cell rule
+is the whole of it. Flash has room to spare: the per-app region is 400 KiB and
+the app uses about 20% of it. The claim that used to sit here, a `data_size`
+ceiling around 18432..19456 that stopped two 160-wide sleeves from booting, was
+an artifact of a Speculos loading bug; see AGENTS.md and
+docs/speculos-nvm-loading.md. `--size 160` and `--size 192` still work for
 bench experiments; only 128 ships.
 
 ### Scan order (the part to cross-check)
@@ -88,8 +89,9 @@ Two things went into that, and they have different confidence levels:
 
 ## Assets
 
-Packed at 128x128 (2048 bytes each), the width `state.rs` now pins: the device
-keeps one art slot per record it can hold, and two 160-wide slots do not boot.
+Packed at 128x128 (2048 bytes each), the width `state.rs` pins: the device
+keeps one art slot per record it can hold, and the 64-byte cell rule allows no
+width between 128 and 160.
 
 | file | album | sha256 of the packed bytes |
 |---|---|---|

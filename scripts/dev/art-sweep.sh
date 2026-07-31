@@ -1,8 +1,14 @@
 #!/bin/bash
-# Sweep the art region size to find the NVM ceiling: for each width, patch
-# ART_W in state.rs, rebuild, boot Speculos, and check the app answers
-# GET_INFO (a too-large region dies with "exit called" before any APDU).
+# Sweep the art region size: for each width, patch ART_W in state.rs, rebuild,
+# boot Speculos, and check the app answers GET_INFO.
 # Usage: art-sweep.sh 128 160 192 224
+#
+# This was written to find an NVM ceiling. There is no ceiling: the per-app
+# region is 400 KiB and the app uses about 20% of it. The failures it recorded
+# came from the Speculos loader dropping most of .nvm_data, fixed by
+# scripts/patch-speculos.sh (docs/speculos-nvm-loading.md). Widths that die on
+# a patched emulator are the app's own problem; the ones it recorded before are
+# not evidence of anything.
 source "$(dirname "$0")/../env.sh"
 STATE="$APP_DIR/src/state.rs"
 cp "$STATE" /tmp/state.rs.bak
