@@ -185,14 +185,14 @@ rendered as four lines of two words, in that order
 ```
 
 The first eight bytes, in the order the head stores them, one word per byte:
-64 bits. That width is an adversarial choice rather than a cosmetic one. A
-forger fabricating a clone's history invents every key in it, so he can grind
+64 bits. The width is chosen against a forger. Fabricating a clone's history
+means inventing every key in it, so he can grind
 links offline until his head agrees with the original's over whatever prefix a
 screen shows; 32 bits, the width of a Device ID, falls to that, and 64 does not.
 Words rather than the sixteen equivalent hex characters because words are what
 humans actually compare, which is why the pairing renders words too.
 
-The device shows them on the record card's History page (Device ID, then
+The device shows them on the record card's History page (Provenance, then
 History), for a pressing that has changed hands at least once. A master is never
 handed on, so its head stays at the all-zero sentinel and would read the same on
 every device in existence, and it is offered no History page at all. A copy
@@ -276,7 +276,8 @@ and give another) from sharing a pad and publishing the XOR of two keys.
 0x64 GET_ART        p1 = chunk index, p2 = slot        -> chunk(<=64)
 
   development provisioning: the laptop acts as the master. No pairing, no UI
-  gate, compiled into the current build. See the README's out-of-scope section.
+  gate, compiled into the current build. See docs/threat-model.md, "Explicitly
+  out of scope".
 0x66 PROVISION_ALBUM    data = AlbumCert(223)                            -> ok (staged)
 0x67 PROVISION_PRESSING data = PressingCert(178) || bearer key(32)  [210] -> ok
 
@@ -369,7 +370,7 @@ is rendered honestly (generative), never surfaced as an error.
 
 The app opens on the **library**: a list of the records the device holds, each
 row a decimated sleeve thumbnail, the title from the certificate, and a status
-line, over a "Quitter" footer that exits. Row status uses the "#N of M" family:
+line, over a "Quit" footer that exits. Row status uses the "#N of M" family:
 a pressing row reads `#1 of 5` (or `#1 of 5 - promised, reconnect XXXXXXXX`),
 and the master's own row reads `Master - N of M left`, or `Master - Sold out`.
 The library runs an APDU-aware
@@ -383,7 +384,7 @@ and does not repaint per chunk.
 
 Tapping a row opens the **record card**, a two-page generic review:
 
-- **Page 1 of 2, the record card.** A large `#N` on the left, the 160px cover
+- **Page 1 of 2, the record card.** A large `#N` on the left, the 128px cover
   to its right with a short Cover Flow mirror reflection (the cover flipped,
   ordered-Bayer dithered from ~0.55 at the seam to 0, strict 1-bit), and the
   album title in bold below with the artist under it, the block vertically
@@ -397,15 +398,18 @@ Tapping a row opens the **record card**, a two-page generic review:
   (`include_gif`, baked by build.rs, because a runtime heap icon faults under PIC
   relocation on this target) that is the tap affordance into the row's own
   sub-page: Number (`#N of M`, `#0 of M` for a master), Edition ID (the first 8
-  hex of `SHA256(albpub)`), Device ID (the first 8 hex of `SHA256(devpub)`), and
-  "Learn more". **Four rows, always**, whatever the device holds: the list area
+  hex of `SHA256(albpub)`), Provenance (`Master` for a plate, `Pressed` for a copy
+  still on the device it was pressed onto, then `1 handover` and `N handovers`),
+  and "Learn more". **Four rows, always**, whatever the device holds: the list area
   is four touchable bars tall and a fifth is drawn under the split footer, so the
-  count is fixed by the type of the array the rows are built into. Provenance
-  therefore lives on the **Device ID** page, beside the device that holds
-  the record now: the one handover this device can prove, named by fingerprint,
-  and the number of holders before it, carried with the copy and unproven *to
-  this device*. A count and not a list, because the chain is a digest and not a
-  roll of names, the trail is unbounded, and the page holds four rows.
+  count is fixed by the type of the array the rows are built into. The
+  **Provenance** page therefore carries the fingerprint of the device holding the
+  record now as its first pair, beside where the record came from: the one
+  handover this device can prove, named by fingerprint, and the number of holders
+  before it, carried with the copy and unproven *to this device*. It gives a
+  count where a list would be expected, because the chain is a digest, the trail
+  is unbounded, and the page it sits on renders two pairs and seven lines of
+  value before the footer takes the screen.
 
 The sub-pages carry the explanations, one fact each: what the numbering means
 and that the counter is sealed in the chip; what the Edition ID is and to
@@ -419,8 +423,8 @@ answering, because a software clone holds the same scalar and presents the same
 certificates. Attestation is what would close the second, and
 docs/threat-model.md says why it is declined.
 
-One page deeper, the **History** page, reached from the right half of the Device
-ID page's split footer and offered for a pressing only: the chain head as eight
+One page deeper, the **History** page, reached from the right half of the
+Provenance page's split footer and offered for a pressing only: the chain head as eight
 words, four lines of two under a tag counting the handovers they stand for, over
 one line giving the comparison that holds, two copies of one number in front of
 one reader at one time, both answering the possession challenge, identical words
@@ -428,7 +432,7 @@ proving a duplicate and divergent words a split lineage (see **Reading the head
 aloud**). The head moves at every handover, so words recorded at an earlier hop
 disagree with a copy that has merely moved on, which is why no instruction here
 sends the reader to a note made elsewhere. It is its own
-page and not a third pair on the Device ID page, because that page's list
+page rather than a third pair on the Provenance page, because that page's list
 already ends at the last line it can render, and eight words wrap. Its own
 height is fixed for the same reason the back of the record is: constant strings
 and a fixed grid, so the page measures the same at one hop as at two hundred,
@@ -538,8 +542,8 @@ stays what it always was, the recipient's receipt.
 
 A committed row says "reconnect XXXXXXXX", so finishing an interrupted transfer
 means identifying one device among several. A device that holds a record shows
-its Device ID on the back of the card, but the candidate is often a device
-holding nothing, which has no card to open. So the library's empty state carries
+its own fingerprint on the record's Provenance page, but the candidate is often a
+device holding nothing, which has no card to open. So the library's empty state carries
 `Device ID XXXXXXXX` under its message, in both its readings ("No records yet"
 and "You gave your copy away"). It is the same SHA256(devpub) fingerprint as
 everywhere else: nothing is stored and nothing is sent to display it.
