@@ -81,8 +81,8 @@ region; whether the OS would accept an image larger than it is **untested**.
 
 Enclave occupies 82846 bytes of that region today, 20.2 percent (measured:
 `_nvram_end - _text` off the ELF symbol table; the figure moves by a few hundred
-bytes per commit, and `docs/reader.md` section 1.2 records 82334 for a slightly
-earlier build).
+bytes per commit, and `docs/reader.md` section 1.2 records the same figure off
+the same ELF).
 
 ### 5.2 The ceiling
 

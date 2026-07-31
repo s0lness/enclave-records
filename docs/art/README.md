@@ -1,7 +1,8 @@
 # Sleeves
 
 A *sleeve* is an album's cover art: a packed 1-bit bitmap uploaded to a device
-and drawn next to the record in the collection screen.
+and drawn twice on Flex, as a decimated thumbnail on the record's library row and
+at its full 128 px, with a mirror reflection under it, on the record card.
 
 The sleeve carries **no typography**. The device draws the title itself, at
 runtime, from the signed AlbumCert. A title baked into the artwork could
@@ -54,10 +55,12 @@ Two things went into that, and they have different confidence levels:
   * `docs/screens/19-art-test.png`: the ART_TEST prototype fills a row-major
     buffer whose dark 16x16 square sits top-**left**; the Flex draws that
     square top-**right**.
-  * `docs/screens/22-cover-fixed.png`: decoding the stored 4bpp cover
-    column-major and high-nibble-first reproduces the screenshot exactly
-    (correlation 1.0000 over the 64x64 art area; every other combination of
-    row/column order and flip scores below 0.95).
+  * A second render, of the 4bpp cover the project shipped at the time, agreed:
+    decoding it column-major and high-nibble-first reproduced the screenshot
+    exactly (correlation 1.0000 over the 64x64 art area; every other combination
+    of row/column order and flip scored below 0.95). That screenshot is no longer
+    in `docs/screens/`, so the ART_TEST render above is the evidence that
+    survives in the tree.
 
   Both say: *what the screen shows is the row-major decode of the buffer,
   rotated 90 degrees clockwise.* So we pre-rotate counter-clockwise.
@@ -108,10 +111,9 @@ gradients in `scripts/sleeve_art.py`. The Random Access Memories sleeve is a
 homage (two robot helmets under a stage light), not a reproduction of the
 album photograph.
 
-> **Heads-up for `device-app/`:** `ram-cover.bin` used to be a 64x64 **4bpp**
-> file of 2048 bytes. It is now 160x160 **1bpp** of 3200 bytes. Same name,
-> different format and length; anything that still assumes 2048 bytes of
-> nibbles needs updating. `scripts/make-cover.py` was the old 4bpp generator,
+> **History:** the covers were 64x64 **4bpp** once and are 128x128 **1bpp**
+> now. Both pack to 2048 bytes, which is `ART_LEN`, so the length has never
+> moved. `scripts/make-cover.py` was the old 4bpp generator,
 > since deleted (its packing comment was also wrong: it transposes instead
 > of rotating, and puts the first pixel of a pair in the low nibble, which is
 > why the shipped 4bpp cover renders mirrored and pair-swapped on device).
@@ -129,11 +131,11 @@ python3 scripts/sleeve.py \
 ```
 
 The source can be any image of any size: it is centre-cropped to a square
-(never squashed), resampled to 160x160, tone-mapped and dithered.
+(never squashed), resampled to 128x128, tone-mapped and dithered.
 
 ```
 --dither atkinson|floyd|threshold   default atkinson
---size N                            default 160, multiple of 32
+--size N                            default 128, multiple of 32
 --gamma G                           default 1.2 for --in, 1.0 for --design
 --clip F                            autocontrast percentile per end (0 = off)
 --threshold T                       black/white decision level, default 128
@@ -184,7 +186,7 @@ The tool prints the SHA-256 of the packed bytes on every run:
 
 ```
 $ ... sleeve.py --design ram
-b93ddbc7a5672d0fe0f41b252ff943383b1f554b6eac30457c30c8fa88cd4ab8  160x160 1bpp 3200 bytes
+c8b6da83eae4899b204d1b141766bbc28e09b151fc4053baef05da5825de2c08  128x128 1bpp 2048 bytes
 ```
 
 To verify a stored asset, recompose it from its source with the same flags

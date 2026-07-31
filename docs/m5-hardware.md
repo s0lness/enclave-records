@@ -1,6 +1,7 @@
 # M5: live demo on the two real Flexes
 
-Everything up to here is green in emulation (11 pytest, `scripts/test.sh`).
+Everything up to here is green in emulation (`scripts/test.sh`; the count moves
+every week, so run it rather than trusting a number written here).
 This is the checklist for the hardware finale. Steps marked [manual] need a
 human at the machine; the rest is scripted.
 
@@ -34,15 +35,20 @@ bash scripts/ceremony.sh
 ```
 
 Beats, in order:
-1. Cut: Flex A confirms "Cut master of Nuits Roses, edition of 5".
+1. Cut: Flex A confirms "Cut master of Random Access Memories?" over "Edition of
+   5, fixed forever. Losing this device destroys the plates."
 2. Pairing: both screens show the same 4 words. Say them out loud. Tap
    "Words match" on both. (To show the MITM defense live: run
    `tests/test_m4_adversarial.py` in emulation, or just explain it.)
-3. Press: A confirms "Press Nuits Roses 1 of 5", B confirms "Receive".
+3. Press: A confirms "Press Random Access Memories 1 of 5?" over "For device
+   XXXXXXXX. 4 pressings will remain.", B confirms "Receive it".
 4. Sold out (optional, repeat presses until refusal at 0).
 5. Finale: turn OFF wifi, run `relay/demo.py --verify` with only Flex B
-   plugged: "GENUINE: pressing 1 of 5, bound to this device, possession
-   proven live." No network, no server, no chain.
+   plugged: `GENUINE: pressing 1 of 5 of "<title>", held by this device, key
+   possession proven live.` No network, no server, no chain. What that proves is
+   possession of the copy's key by whatever answered, which is what the Learn
+   more page says on the device. A software clone holding the same scalar answers
+   the same way.
 
 ## Known unknowns to watch at first contact
 
@@ -54,4 +60,6 @@ Beats, in order:
   return 2 paths. If Windows/usbipd only exposes one at a time, attach both
   busids (scripts/windows/attach-usb.ps1 loops over all 2c97 devices).
 - BOLOS endorsement (attestation, "layer 2") is NOT in v1: the demo's trust
-  statement is layers 0+1 (captive keys + fraud-evident numbering).
+  statement is layers 0+1 (captive keys, fraud-evident numbering, and a signed
+  provenance chain that makes a circulating duplicate fork under the signature of
+  the device that split it).

@@ -9,6 +9,10 @@ Measured on speculos 0.26.10 (`g93df48d34`), model flex, API level 26, host
 Linux aarch64 (WSL Ubuntu on Windows 11 ARM), against a Rust app built with
 `ledger_device_sdk` 1.36.0 and `ledger_secure_sdk_sys` 1.16.2.
 
+Every offset below belongs to one build. `load_size` moves a few hundred bytes
+per commit and the shortfall moves with it; the mechanism and the formula are
+what generalise.
+
 ## Summary
 
 For a Rust application, Speculos maps the ELF from the `PT_LOAD` segment that
