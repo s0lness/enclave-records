@@ -8,8 +8,8 @@ numbered copy is pressed onto the receiver, and anyone verifies it offline.*
      GitHub uploads it and writes an inline player with play/pause/scrub. An mp4
      committed to the repo and referenced by path renders only as a download
      link, which is why no link is left here. docs/demo.mp4 is the film of an
-     earlier ceremony and predates the current screens (the Device ID page, the
-     four-row back of the card, provenance, Learn more), so re-shoot it with
+     earlier ceremony and predates the current screens (the Provenance page and
+     its History, the back of the card, Learn more), so re-shoot it with
      CEREMONIE-VIDEO.md rather than posting it as it stands. For an emulator-only
      capture instead, scripts/dev/record-demo.sh stitches one from Speculos. -->
 
@@ -191,8 +191,8 @@ That one choice is what the rest of the design follows from:
   hands.
 - **The album key signs once and is then irrelevant to that copy.** The artist's
   master can be destroyed and the copies keep verifying.
-- **The proof follows the key, not the hardware.** Which is also the price:
-  whoever reads the scalar in flight holds the copy too. See
+- **The proof follows the key.** Nothing binds a copy to one piece of hardware,
+  which is also the price: whoever reads the scalar in flight holds the copy too. See
   [docs/threat-model.md](docs/threat-model.md).
 
 Three files, one job each. This one is about what the object is and what it is
@@ -385,7 +385,8 @@ device has to be reconnected. So:
 
 ### Provenance
 
-On the record's `Device ID` page, beside the device that holds it now:
+On the record's `Provenance` page, opened from the back-of-record row that says
+how far the copy has travelled, beside the device that holds it now:
 
 - **the previous holder**, named by fingerprint. Exactly one hop, and it is the
   one hop this device can prove on its own: the giver signs a handover record
@@ -429,11 +430,16 @@ one](docs/threat-model.md#what-a-holder-does-with-a-chain) are a verifier's work
 off the device.
 
 What the device does carry is the head itself, on a `History` sub-page of its
-own behind `Device ID`: its first 64 bits as **eight words** from the same list
-the pairing uses. Sixty-four bits because a forger fabricating a history can
+own behind `Provenance`: its first 64 bits as **eight words** from the same list
+the pairing uses. A copy that has not moved yet shows no words. It sits at the
+genesis `SHA256("presse-chain" || album_id || number)`, which every copy of that
+number shares, so the page stays reachable and says why there is nothing to read. Sixty-four bits because a forger fabricating a history can
 grind it offline until his head matches over whatever prefix a screen shows, and
-32 bits (the width of a `Device ID`) does not survive that. Read them against
-what somebody wrote down the last time they saw the copy; a verifier holding the
+32 bits (the width of a device fingerprint) does not survive that. The head moves
+at every handover, so the comparison that holds is two copies claiming one number,
+in front of one reader, at one moment: identical words with both answering the
+challenge proves duplication, and divergent words mean the lineages split. A
+verifier holding the
 32-byte head from `GET_BUNDLE p1=2` renders the same eight, by the rule in
 [docs/protocol.md](docs/protocol.md#the-provenance-chain).
 
@@ -557,6 +563,10 @@ capability into the project that is not there.
 - `docs/threat-model.md` - the two promises and which one is sacrificed, what the
   security rests on, why attestation is not implemented, how a copy can be lost,
   what is out of scope.
+- `docs/ledger-as-reader.md` - the case for compiling a book into the app, and
+  every figure behind it, each labelled measured, inferred or untested.
+- `docs/reader.md` - the engineering design that follows: where the text sits, how
+  a page is found, what goes in NVM, and the build order.
 - `CEREMONIE-VIDEO.md` - the filmed-ceremony runbook for two physical Flex
   (French), including what to point the camera at.
 
@@ -570,7 +580,7 @@ not optional on any platform. Then:
 
 ```
 scripts/build.sh        # cargo ledger build flex, this checkout
-scripts/test.sh         # 75 tests, one or two emulated Flex
+scripts/test.sh         # the suite, over one or two emulated Flex
 scripts/rehearse-emu.sh --auto    # cut, pair, press, verify on two emulators
 scripts/emu-up.sh       # two persistent emulators (:5001, :5002)
 scripts/cockpit.sh      # both screens + the APDU wire on :5050
@@ -616,9 +626,10 @@ Everything above except *Designed but not built* and the non-goals listed in
 [docs/threat-model.md](docs/threat-model.md):
 cut, pair, press, offline verify, give (three-state commitment, cancel, resume),
 sleeve art sealed into the album certificate, the library, the record card and
-the sub-pages behind it (the number, the Edition ID, the Device ID with the
-provenance on it, the History that reads the chain head as eight words, and
-Learn more). 75 tests over one or two emulated Flex. The ceremony has been run
+the sub-pages behind it (the number, the Edition ID, the Provenance with the
+holder and the trail on it, the History that reads the chain head as eight words, and
+Learn more). The suite covers all of it over one or two emulated Flex. The
+ceremony has been run
 end to end on two physical Flex; the film of it predates the current screens and
 has to be re-shot.
 
