@@ -193,8 +193,14 @@ Words rather than the sixteen equivalent hex characters because words are what
 humans actually compare, which is why the pairing renders words too.
 
 The device shows them on the record card's History page (Device ID, then
-History), for a pressing only: a master is never handed on, so its head stays at
-the all-zero sentinel and would read the same on every device in existence. Any
+History), for a pressing that has changed hands at least once. A master is never
+handed on, so its head stays at the all-zero sentinel and would read the same on
+every device in existence, and it is offered no History page at all. A copy
+still on the device it was pressed onto sits at `C0`, which is `SHA256` over an
+album id and a number that `GET_BUNDLE p1=0` already publishes, so every copy
+claiming that number renders the same eight words: the page is reachable and
+says that, withholding words whose comparison would succeed on a clone as
+readily as on an original. Any
 verifier reads the full 32-byte head from `GET_BUNDLE p1=2` and renders the same
 eight words from the same rule; `tests/presse_client.py` (`SAS_WORDS`,
 `head_words`) is one such implementation, and `relay/give.py` prints them beside
@@ -404,15 +410,24 @@ Tapping a row opens the **record card**, a two-page generic review:
 The sub-pages carry the explanations, one fact each: what the numbering means
 and that the counter is sealed in the chip; what the Edition ID is and to
 confirm it through the artist's own channels; who holds the record and where it
-came from. **Learn more** states what the device proves (genuine artwork from
-this edition, and that this device holds it) and what it cannot (that the album
-key is the real artist's), because a copycat could reuse the same artwork under
-a different Edition ID.
+came from. **Learn more** states what the device establishes (one album key
+signed this edition, and this number out of this edition size inside it, and
+whatever answers holds the record's key now) and the two things it does not:
+that the album key belongs to the artist on the sleeve, because a copycat can
+reuse the same artwork under a different Edition ID, and that real silicon is
+answering, because a software clone holds the same scalar and presents the same
+certificates. Attestation is what would close the second, and
+docs/threat-model.md says why it is declined.
 
 One page deeper, the **History** page, reached from the right half of the Device
 ID page's split footer and offered for a pressing only: the chain head as eight
-words, four lines of two, over one line saying to compare them with what was
-recorded for the copy elsewhere (see **Reading the head aloud**). It is its own
+words, four lines of two under a tag counting the handovers they stand for, over
+one line giving the comparison that holds, two copies of one number in front of
+one reader at one time, both answering the possession challenge, identical words
+proving a duplicate and divergent words a split lineage (see **Reading the head
+aloud**). The head moves at every handover, so words recorded at an earlier hop
+disagree with a copy that has merely moved on, which is why no instruction here
+sends the reader to a note made elsewhere. It is its own
 page and not a third pair on the Device ID page, because that page's list
 already ends at the last line it can render, and eight words wrap. Its own
 height is fixed for the same reason the back of the record is: constant strings

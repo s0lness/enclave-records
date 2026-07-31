@@ -233,14 +233,18 @@ struct CardData {
     /// is one. Empty for a copy that came straight from a press, and for a
     /// master: only a transfer has a previous holder to name.
     received_from: String,
-    /// How many holders came before that one. A count and not their
-    /// fingerprints: the proof of them is the chain digest, which is not
-    /// readable as a list of names, and a list that grows with every hop is a
-    /// screen that eventually runs off its bottom edge. The count states the
-    /// same fact in a fixed number of characters.
-    earlier: u8,
+    /// How many times this copy has changed hands. Zero for a copy still on
+    /// the device it was pressed onto, and for a master.
+    ///
+    /// Two pages read it. The Device ID page states the holders behind the one
+    /// it names (`hops - 1`) as a bare count: the proof of them is the chain
+    /// digest, which no screen can read out as a list of names, and a list that
+    /// grows with every hop eventually runs off the bottom edge. The history
+    /// page reads it to know whether the head is still the public root every
+    /// copy of this number shares.
+    hops: u8,
     /// The first [`HEAD_WORDS`] bytes of the provenance chain head, which the
-    /// history page renders as words.
+    /// history page renders as words once the copy has moved.
     ///
     /// `None` for a master, and the history page is not offered for one: a
     /// plate is never handed on, so its head stays at the all-zero sentinel and
@@ -270,7 +274,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 sleeve_verified: sleeve_verified(&sleeve_hash, crate::state::SLOT_MASTER),
                 slot: crate::state::SLOT_MASTER,
                 received_from: String::new(),
-                earlier: 0,
+                hops: 0,
                 history: None,
             }))
         }
@@ -282,9 +286,6 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
             } else {
                 String::new()
             };
-            // The newest hop is the device the provenance names; only what lies
-            // behind it is "earlier".
-            let earlier = nvm.hops.saturating_sub(1);
             let mut history = [0u8; HEAD_WORDS];
             history.copy_from_slice(&nvm.chain[..HEAD_WORDS]);
             Ok(Some(CardData {
@@ -298,7 +299,7 @@ fn gather_card(kind: RecordKind) -> Result<Option<CardData>, AppSW> {
                 sleeve_verified: sleeve_verified(&album.sleeve_hash, crate::state::SLOT_PRESSING),
                 slot: crate::state::SLOT_PRESSING,
                 received_from,
-                earlier,
+                hops: nvm.hops,
                 history: Some(history),
             }))
         }
@@ -492,10 +493,13 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
                 (_, true) => String::from("Pressed onto this device from the master."),
                 _ => format!("{}, the one handover this device can prove.", card.received_from),
             };
-            if card.earlier > 0 {
+            // The newest hop is the device the provenance names; only what lies
+            // behind it is "earlier".
+            let earlier = card.hops.saturating_sub(1);
+            if earlier > 0 {
                 origin += &format!(
                     " Before it: {} more, carried with the copy, unproven.",
-                    card.earlier
+                    earlier
                 );
             }
             pairs.push(pair(cstr(String::from("Where it came from")), cstr(origin)));
@@ -516,49 +520,101 @@ fn draw_page(card: &CardData, page: Page) -> Result<crate::app_ui::library::Exit
             }
         }
         Page::InfoHistory => {
-            // The head of the provenance chain, rendered so two people can
-            // check one copy against what someone wrote down about it. Eight
-            // words is 64 bits, which is what survives a forger grinding a
-            // fabricated history against the prefix a screen shows; the whole
-            // reasoning sits on `HEAD_WORDS`.
+            // The head of the provenance chain, rendered so two copies claiming
+            // one number can be read against each other. Eight words is 64
+            // bits, which is what survives a forger grinding a fabricated
+            // history against the prefix a screen shows; the whole reasoning
+            // sits on `HEAD_WORDS`.
             //
-            // Its height is fixed by construction, and measured: the value
-            // column is 416px wide from x=32, and the page draws the tag at
+            // The head moves at every handover, so it names one moment of one
+            // copy. The comparison the page describes is the only one that
+            // holds: two copies claiming the same number, in front of the same
+            // reader, at the same time. Words written down at an earlier hop
+            // disagree with a legitimate copy, so an instruction to check them
+            // against a record made elsewhere fails on the honest case.
+            //
+            // Height is fixed by construction, and measured. The value column
+            // is 416px wide from x=32; with words the page draws the tag at
             // y=120, the four word lines at 160/196/232/268, the second tag at
-            // 328 and its three lines at 368/404/440, so the last line ends at
-            // 476 against a footer rule at 504. Both values are constants and
-            // the words are a fixed grid rather than a line per hop, so the
-            // page measures the same at one hop as at two hundred. Two words to
-            // a line and not three: a long pair renders at 307px inside that
+            // 328 and its three lines at 368/404/440; the pressed-here variant
+            // draws 3 lines, its second tag at 292, then 4 lines.
+            // Both end at 440, so the last line ends at 476 against a footer
+            // rule at 504. The words are a fixed grid rather than a line per
+            // hop, so the page measures the same at one hop as at two hundred.
+            // Two words to a line: a long pair renders at 307px inside that
             // 416px column while three words pass it, and a wrapped line would
             // put the page's height back under the head's control.
             layout.header(cstr(String::from("History")), core::ptr::null());
             let head = card.history.unwrap_or([0u8; HEAD_WORDS]);
-            pairs.push(pair(
-                cstr(String::from("This copy's history")),
-                cstr(head_words(&head)),
-            ));
-            pairs.push(pair(
-                cstr(String::from("How to use it")),
-                cstr(String::from(
-                    "Compare these with the words recorded for this copy elsewhere.",
-                )),
-            ));
+            if card.hops == 0 {
+                // A copy still on the device it was pressed onto sits at
+                // `chain_genesis(album_id, number)`, which is SHA256 over two
+                // values any holder of the bundle already has. Every copy
+                // claiming this number renders the same eight words, so
+                // offering them here would hand the reader a comparison that
+                // succeeds on a clone as readily as on the original. The page
+                // stays reachable, because the footer that opens it must not
+                // appear and vanish with the device's state, and because this
+                // is the one place the reader can be told why there is nothing
+                // to read yet.
+                pairs.push(pair(
+                    cstr(String::from("No handover yet")),
+                    cstr(String::from(
+                        "This copy was pressed onto this device and has not moved since.",
+                    )),
+                ));
+                pairs.push(pair(
+                    cstr(String::from("Nothing to compare")),
+                    cstr(String::from(
+                        "Every copy of this number starts on the same words. They part at the first handover.",
+                    )),
+                ));
+            } else {
+                // The tag counts the handovers the words stand for, which is
+                // what stops them reading as a name the copy carries: they are
+                // the head after this many hops and they move at the next one.
+                pairs.push(pair(
+                    cstr(format!(
+                        "Words after {} handover{}",
+                        card.hops,
+                        if card.hops == 1 { "" } else { "s" }
+                    )),
+                    cstr(head_words(&head)),
+                ));
+                pairs.push(pair(
+                    cstr(String::from("Copy beside copy, now")),
+                    cstr(String::from(
+                        "Both answering, same words: duplicated. Different words: lineages split.",
+                    )),
+                ));
+            }
             layout.tag_value_list(&pairs);
             layout.footer(cstr(String::from("Back")), TOKEN_BACK);
         }
         Page::LearnMore => {
+            // What the model establishes and where it stops, stated on the page
+            // a buyer opens to ask.
+            //
+            // What a challenge establishes is possession of the copy's key by
+            // whatever answered it, which is a claim about a key: a software
+            // clone holds the same scalar, presents the same certificates and
+            // answers the same challenge. Nothing in this app attests to the
+            // silicon underneath, so the page keeps the claim on the answer
+            // rather than on the device. Above that sits the album key, which
+            // the certificates chain to and which no signature here ties to the
+            // person named on the sleeve.
             layout.header(cstr(String::from("Learn more")), core::ptr::null());
             pairs.push(pair(
                 cstr(String::from("This device proves")),
-                cstr(String::from(
-                    "Genuine artwork from this edition, and that this device holds it.",
+                cstr(format!(
+                    "One album key signed this edition, and {} inside it. Whatever answers holds this record's key now.",
+                    number_line
                 )),
             ));
             pairs.push(pair(
                 cstr(String::from("It cannot prove")),
                 cstr(String::from(
-                    "That the album key is the real artist's. Check the Edition ID.",
+                    "That the album key is the artist's. Software can answer exactly as this does.",
                 )),
             ));
             layout.tag_value_list(&pairs);
@@ -1049,25 +1105,38 @@ pub fn handler_card_preview(command: Command<'_>) -> Result<CommandResponse<'_>,
     }
     let number = u16::from_le_bytes([data[0], data[1]]);
     let edition = u16::from_le_bytes([data[2], data[3]]);
+    let is_master = number == 0;
 
     let card = CardData {
         title: String::from("Random Access Memories"),
         artist: String::from("Daft Punk"),
         edition,
         // number 0 renders the master (#0); any other renders that pressing.
-        number: if number == 0 { None } else { Some(number) },
+        number: if is_master { None } else { Some(number) },
         edition_id: String::from("A1B2C3D4"),
         device_id: String::from("3FC2A9B1"),
         album_id: [0x42u8; 32],
         sleeve_verified: false,
         slot: crate::state::SLOT_MASTER,
-        // A synthetic card is never a transfer, so its Device ID page reads
-        // as a copy that came straight from a press.
-        received_from: String::new(),
-        earlier: 0,
+        // A pressing that has travelled, because that is the tall variant of
+        // both pages the probe exists to film: the Device ID page grows a
+        // sentence for the holders behind the named one, and the history page
+        // carries the eight words only once the copy has moved. A master is
+        // built as a plate really is, cut here and never handed on, so its
+        // pages read as they do on a device.
+        received_from: if is_master {
+            String::new()
+        } else {
+            String::from("9D4E17A2")
+        },
+        hops: if is_master { 0 } else { 3 },
         // A fixed head, so the history page captures the same eight words on
-        // every run: the probe exists to film a layout, not to state a fact.
-        history: Some([0x2A, 0x91, 0x07, 0xC4, 0x6B, 0xFE, 0x35, 0x80]),
+        // every run of a probe whose whole job is to film a layout.
+        history: if is_master {
+            None
+        } else {
+            Some([0x2A, 0x91, 0x07, 0xC4, 0x6B, 0xFE, 0x35, 0x80])
+        },
     };
     card_loop(&card)?;
 

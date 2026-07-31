@@ -1097,24 +1097,74 @@ def test_the_word_rule_is_a_lookup_on_the_first_eight_bytes_of_the_head():
     assert head_words(bytes(8) + bytes([7]) * 24) == ["acrobat"] * 8
 
 
-def test_the_history_page_shows_the_head_as_eight_words(two):
-    """A copy straight from the press sits at the root its own certificate
-    implies, so the words on its screen are computable here from the certificate
-    alone, with no reference to what the device rendered."""
+def screen_texts_of(p: Presse, since: int) -> list:
+    """The exact text of every element the page on display drew, so a line can
+    be asserted whole. `wait_for_text` matches a substring, which cannot tell
+    "1 handover" from "1 handovers"."""
+    return [e.get("text", "") for e in current_screen(p.dev, since)]
+
+
+def test_a_copy_that_has_not_moved_is_offered_no_words_to_compare(two):
+    """A copy straight from the press sits at `chain_genesis(album_id, number)`,
+    which is SHA-256 over an album id and a number anyone who has read the
+    bundle already holds. Every copy claiming this number therefore renders the
+    same eight words, and a reader comparing them would find a clone agreeing
+    with an original.
+
+    So the page withholds the words for as long as they say nothing, and states
+    why. It stays reachable through the same footer: an affordance that appears
+    and vanishes with the device's state is its own puzzle, and this page is the
+    one place the answer can be written."""
     a, b = two
     cert = press_one(a, b)
     album_id, number, _, _, _, _ = parse_pressing_cert(cert)
-    head = chain_genesis(album_id, number)
-    assert read_witness(b)["chain"] == head
+    # The head really is the public root here: that is the whole reason the
+    # words are withheld, and it is checked rather than assumed.
+    assert read_witness(b)["chain"] == chain_genesis(album_id, number)
 
     since = history_page(b)
-    assert word_lines(b, since) == two_per_line(head_words(head)), (
-        b.dev.screen_texts()[since:]
-    )
+    assert word_lines(b, since) == [], b.dev.screen_texts()[since:]
+    texts = screen_texts_of(b, since)
+    assert "No handover yet" in texts, texts
+    assert "Nothing to compare" in texts, texts
+    assert any("starts on the same words" in t for t in texts), texts
     assert_page_fits(b.dev, since)
+
+
+def test_the_words_appear_at_the_first_handover_and_name_the_hop_they_stand_for(two):
+    """The boundary of the rule above, and the reason the words are dated.
+
+    One handover folds a link into the head, which moves it off the root and
+    makes it say something about this copy alone. The head is replayed here from
+    the root through the link the copy really took, so the screen has to agree
+    with the fold. The tag counts the handovers those words stand for: a head is
+    a moment of a copy, and the next handover replaces it."""
+    a, _ = two
+    giver = pair_as_giver(a)
+    bearer = stage_a_copy(a, giver)
+    _, sw = a.cmd_gated(INS_TAKE_CONFIRM, b"", "Receive it", "Receive ")
+    assert sw == SW_OK
+    a.cmd(INS_TAKE_ACCEPT, sealed_frame(giver, bearer))
+
+    album_id = hashlib.sha256(demo_album_key(TITLE, ARTIST, EDITION)[1]).digest()
+    root = chain_genesis(album_id, 1)
+    witness = read_witness(a)
+    assert witness["hops"] == 1
+    replayed = chain_link(root, giver.pub, witness["sig"], a.get_info()["devpub"])
+    assert witness["chain"] == replayed, "the head is not the history it claims"
+    assert replayed != root, "one handover left the head on the public root"
+
+    since = history_page(a)
+    assert word_lines(a, since) == two_per_line(head_words(replayed)), (
+        a.dev.screen_texts()[since:]
+    )
+    assert "Words after 1 handover" in screen_texts_of(a, since), (
+        a.dev.screen_texts()[since:]
+    )
+    assert_page_fits(a.dev, since)
     # Each line inside the value column, which is the other half of "four
     # lines": a pair too wide for it wraps, and a wrapped pair is a fifth.
-    for e in word_events(b, since):
+    for e in word_events(a, since):
         assert e["x"] >= VALUE_COLUMN_LEFT and e["x"] + e["w"] <= VALUE_COLUMN_RIGHT, e
 
 
@@ -1125,7 +1175,13 @@ def test_the_words_follow_the_head_when_the_copy_changes_hands(two):
 
     The copy goes out and comes back so the device read at the end holds a
     pressing and nothing else, which is the only state where "open the record"
-    is unambiguous."""
+    is unambiguous.
+
+    The instruction under the words is asserted here too, because it is the
+    operation they support: two copies of one number, in front of one reader, at
+    one time. A head recorded at an earlier hop disagrees with a copy that has
+    simply moved on, so a comparison against a note made elsewhere fails on the
+    honest case."""
     a, b = two
     cert = press_one(a, b)
     album_id, number, _, _, _, _ = parse_pressing_cert(cert)
@@ -1147,6 +1203,11 @@ def test_the_words_follow_the_head_when_the_copy_changes_hands(two):
 
     since = history_page(b)
     assert word_lines(b, since) == two_per_line(after), b.dev.screen_texts()[since:]
+    texts = screen_texts_of(b, since)
+    assert "Words after 2 handovers" in texts, texts
+    assert "Copy beside copy, now" in texts, texts
+    assert any("Both answering" in t for t in texts), texts
+    assert any("lineages split" in t for t in texts), texts
     assert_page_fits(b.dev, since)
 
 

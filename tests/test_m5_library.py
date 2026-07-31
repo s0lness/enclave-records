@@ -15,6 +15,7 @@ from presse_client import (
     Presse,
     apdu_hex,
     assert_page_fits,
+    current_screen,
     split_sw,
     parse_album_cert,
     verify_sleeve,
@@ -174,15 +175,38 @@ def test_device_id_info_opens_its_page(device):
 
 def test_learn_more_opens_the_model_limits(device):
     """Learn more leaves the record for the model's limits: what the device can
-    and cannot prove. This is what used to sit on the authenticity page."""
+    and cannot prove.
+
+    Both halves are asserted, because both are claims a buyer acts on. What is
+    established is a signature: one album key over this edition, over this
+    number and this edition size, plus possession of the record's key by
+    whatever answered. What is not is the two things above and below that
+    signature, the album key's owner and the nature of the responder, and a
+    software clone answering exactly as this does is the reason the page can
+    never say the device holds the copy.
+
+    The page is seven lines of value inside a list area that has room for seven,
+    so it is measured here as well as read."""
     p = Presse(device)
     p.cut(TITLE, EDITION, ARTIST)
     assert device.wait_for_text(TITLE)
     open_card_pages(device, p)
+    since = len(device.events())
     p.tap_text("Learn more")
-    assert device.wait_for_text("This device proves"), device.screen_texts()
-    assert device.wait_for_text("It cannot prove"), device.screen_texts()
-    p.tap_text("Back")
+    assert p.wait_for_text_since("This device proves", since), device.screen_texts()[since:]
+    texts = [e.get("text", "") for e in current_screen(device, since)]
+    # A wrapped value arrives one OCR element per line, each ending in the space
+    # it wrapped on, so a sentence is only readable once the runs are collapsed.
+    joined = " ".join(" ".join(texts).split())
+    assert "One album key signed this edition" in joined, texts
+    # The number and the edition size, as the certificate signed them.
+    assert "#0 of 5" in joined, texts
+    assert "Whatever answers holds this record's key now" in joined, texts
+    assert "It cannot prove" in texts, texts
+    assert "That the album key is the artist's" in joined, texts
+    assert "Software can answer exactly as this does" in joined, texts
+    assert_page_fits(device, since)
+    p.tap_text("Back", since=since)
     assert device.wait_for_text("Learn more"), device.screen_texts()
 
 
