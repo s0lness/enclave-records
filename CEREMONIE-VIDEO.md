@@ -28,7 +28,7 @@ Build actuellement flashé sur les deux Flex:
 
 > Ce que porte le build flashé: la clé porteuse (une copie est liée à une clé,
 > pas à un appareil), la cession complète `INS_GIVE_*`/`INS_TAKE_*` avec son
-> annulation, le verso de fiche à quatre lignes (Number, Edition ID, Device ID,
+> annulation, le verso de fiche à quatre lignes (Number, Edition ID, Provenance,
 > Learn more) et la sous-page provenance. §2a, §2b et §2c sont donc tous
 > filmables sans reflasher.
 >
@@ -86,8 +86,8 @@ device. C'est le sens de l'étape des 4 mots.
    le cut et l'annonce, et §2b comme §2c restent filmables tels quels.
    Le `Device ID` imprimé est exactement celui que
    l'écran de A affichera au moment du press (`For device XXXXXXXX`), et celui
-   que chaque Flex montre lui-même (au verso de la fiche, ou sous le message
-   d'une library vide): note lequel est `paths[1]`, c'est le futur destinataire B.
+   que chaque Flex montre lui-même (sur la page `Provenance` d'une fiche, ou sous
+   le message d'une library vide): note lequel est `paths[1]`, c'est le futur destinataire B.
 
    Si `1 Flex vu(s)`: relancer `attach-usb.ps1`, vérifier que le device est
    déverrouillé et l'app ouverte.
@@ -174,17 +174,18 @@ d'abord**:
 
 **À filmer**: les deux taps dans cet ordre, l'écran du donneur qui passe à
 `No records here` / « You gave your copy away. », et celui du receveur où la
-pochette apparaît. Puis la fiche du receveur, page 2, ligne `Device ID`
-(tapée): la sous-page `Where it came from` nomme l'appareil cédant
-(`XXXXXXXX, the one handover this device can prove.`). La provenance est là et
-pas sur la page 2: celle-ci tient quatre lignes, pas cinq.
+pochette apparaît. Puis la fiche du receveur, page 2, ligne `Provenance` (dont
+la valeur est passée à `1 handover`, tapée): la sous-page nomme l'appareil cédant
+sous `Where it came from` (`XXXXXXXX, the one handover this device can prove.`).
+La provenance vit sur cette sous-page parce que la page 2 tient quatre lignes et
+qu'une cinquième se dessine sous le pied de page.
 
 > **Une cession interrompue se reprend, elle ne perd rien.** Le donneur ne
 > supprime pas au moment de livrer la clé: il s'*engage* envers ce receveur-là
 > (sa ligne library passe à `#1 of 5 - promised, reconnect XXXXXXXX`, qui nomme
 > le receveur engagé, et `INS_CHALLENGE` répond déjà `NoPressing`). Ce `XXXXXXXX`
 > est le même empreinte que l'écran de confirmation (`To device XXXXXXXX`) et que
-> le `Device ID` de l'appareil concerné: c'est ce qui permet de retrouver
+> l'empreinte que cet appareil affiche lui-même: c'est ce qui permet de retrouver
 > avec quel Flex terminer. Relancer `give.sh` sur les deux mêmes Flex termine la
 > cession, **sans redemander de confirmation au donneur**. L'effacement réel
 > n'a lieu qu'à la réception du reçu du destinataire.
@@ -303,18 +304,23 @@ et `Back` en pied de page):
   et l'artiste dessous;
 - **page 2**: quatre lignes navigables, chacune ouvrant sa sous-page: `Number`
   (`#1 of 5`), `Edition ID` (8 hex de `SHA256(albpub)`, la même sur toutes les
-  copies de l'édition), `Device ID` (8 hex de `SHA256(devpub)`, l'appareil qui la
-  tient) et `Learn more`. Quatre lignes toujours, quoi que tienne l'appareil.
+  copies de l'édition), `Provenance` (`Master` pour une plaque, `Pressed` pour une
+  copie encore sur l'appareil qui l'a reçue au pressage, puis `1 handover` et
+  `N handovers`) et `Learn more`. Quatre lignes toujours, quoi que tienne
+  l'appareil. L'empreinte de l'appareil qui tient la fiche est la première paire
+  de la page `Provenance`.
 
-**À filmer**: la page 2, puis la sous-page `Device ID` (elle porte la provenance
-après une cession, voir §2c) et `Learn more`, qui dit ce que l'appareil prouve et
+**À filmer**: la page 2, puis la sous-page `Provenance` (elle porte l'empreinte
+du porteur et l'origine, voir §2c) et `Learn more`, qui dit ce que l'appareil prouve et
 ce qu'il ne prouve pas.
 
 > **Pas sur le build flashé, reflash requis.** Sur une copie (jamais sur un
-> master), le pied de page de `Device ID` est coupé en deux: `Back` à gauche,
+> master), le pied de page de `Provenance` est coupé en deux: `Back` à gauche,
 > `History` à droite. `History` ouvre la tête de chaîne en **huit mots** de la
-> liste SAS, quatre lignes de deux, au-dessus de « Compare these with the words
-> recorded for this copy elsewhere. » Le terminal imprime les mêmes huit mots à
+> liste SAS, quatre lignes de deux, sous un tag qui date les mots au nombre de
+> passages (`Words after 1 handover`) et au-dessus de « Both answering, same
+> words: duplicated. Different words: lineages split. » Sur une copie qui n'a
+> jamais bougé la page ne montre aucun mot et dit pourquoi. Le terminal imprime les mêmes huit mots à
 > la fin de `give.sh`, à côté de la tête en hexadécimal: les deux surfaces les
 > dérivent de la même règle (`docs/protocol.md`, *Reading the head aloud*). À
 > filmer une fois les Flex reflashés, et dans le même plan que le terminal: les
