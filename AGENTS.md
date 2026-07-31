@@ -14,8 +14,10 @@ thesis (physical editions of digital works, no chain, no server).
 - `tests/` - pytest driving one or two Speculos instances via the Speculos REST/TCP API
   (deliberately NOT Ragger: it assumes a single device). The dual-instance ceremony
   tests are the project's benchmark (M3/M4).
-- `verifier/` - independent TypeScript verifier (@noble/curves), used by tests and demo.
-  Must share no code with the device app: it is the adversarial check.
+- `tests/presse_client.py` - the reference verifier (python-ecdsa), sharing no code
+  with the device app. That independence is the point of it: it is the adversarial
+  check on the wire formats, and its `SAS_WORDS` / `head_words` are the off-device
+  rendering of the four pairing words and the eight head words.
 - `relay/` - dumb APDU shuttle between the two devices (TCP to Speculos, HID to real
   Flexes). Holds no secrets; the protocol assumes it is hostile.
 - `docs/protocol.md` - the ceremony protocol (commit-reveal ECDH pairing, SAS words,
@@ -30,6 +32,10 @@ thesis (physical editions of digital works, no chain, no server).
 - `docs/speculos-nvm-loading.md` - the upstream bug report for the Speculos
   loader defect described under Gotchas, with the measurement, the mechanism
   and the fix this repo vendors. Nothing has been filed on GitHub.
+- `docs/ledger-as-reader.md` and `docs/reader.md` - the reader idea and the
+  architecture that follows from it. Nothing in either has run on hardware and both
+  say so on every figure. `docs/reader.md` section 1.2 holds the current build's
+  measured sizes and wins whenever this file disagrees with it.
 - `CEREMONIE-VIDEO.md` - runbook for the filmed ceremony on the two real Flexes
   (French), with the header table naming the build actually flashed. Driven by
   `scripts/preflight.sh` (read-only pre-flight), `scripts/ceremony.sh` (the live
@@ -39,7 +45,8 @@ thesis (physical editions of digital works, no chain, no server).
   root from its own path, so every script acts on the checkout it lives in),
   `build.sh`, `load.sh`, `test.sh`, `boottest.sh`, `emu-up.sh`/`emu-down.sh`,
   `cockpit.sh`, `rehearse-emu.sh`, `ceremony.sh`, `give.sh`, `preflight.sh`,
-  `install-ca.sh`, `list-apps.sh`, `sleeve.py`, plus `patch-speculos.sh` and
+  `install-ca.sh`, `list-apps.sh`, `sleeve.py`, `sleeve_art.py` (the generator
+  behind every cover in `docs/art/`), plus `patch-speculos.sh` and
   `speculos-nvm-data.patch`, which fix the emulator (see Gotchas).
   `build-video.sh` and
   `load-video.sh` are aliases of `build.sh`/`load.sh`, kept because the runbook
@@ -88,12 +95,14 @@ value fingerprints a device's key, and the label has to say so.
   re-press off-device). Losing the master = plates destroyed, by design.
 - Speculos OCR (`/events`) is how tests read the screens; SAS word equality across the
   two instances is asserted through it.
-- The app opens on a **library** (the landing screen), not a home button; it is built
-  from raw `nbgl_layout` and yields to APDUs so a ceremony works with it on screen.
-- A copy's history is a **32-byte rolling hash**, not a list: the giver signs the
+- The app opens on a **library** (the landing screen), built from raw
+  `nbgl_layout` and yielding to APDUs so a ceremony works with it on screen.
+  There is no home button.
+- A copy's history is a **32-byte rolling hash**. No device ever holds the list of
+  hops. The giver signs the
   head it received into the handover record, and the taker folds that record into
   a new head. Constant size, constant verification cost, nothing ever dropped.
-  The point is evidence, not prevention: forged, head-substituted, replayed and
+  The chain produces evidence and prevents nothing: forged, head-substituted, replayed and
   grafted links are refused at TAKE, but a *modified* giver can still truncate,
   because a receiver holds a digest and not the witnesses (one signature per hop
   is 72 bytes and does not fit). Never present the chain as making duplication
@@ -103,13 +112,15 @@ value fingerprints a device's key, and the label has to say so.
   root. It is comparative evidence, and the comparison is a verifier's job, off
   the device. What the screen carries is the head itself, as **eight words**
   (its first 8 bytes through the 256-word SAS list, two to a line) on a
-  `History` sub-page under `Device ID`, for a pressing only: 64 bits is what
-  survives a forger grinding a fabricated history against a shown prefix, and a
-  master's head is the all-zero sentinel. The same rule renders off-device from
+  `History` sub-page under `Provenance`, for a pressing only, and it withholds the
+  words until the copy has moved at least once: 64 bits is what survives a forger
+  grinding a fabricated history against a shown prefix; a master's head is the
+  all-zero sentinel, and a freshly pressed copy sits at a genesis every copy of
+  that number shares. The same rule renders off-device from
   `GET_BUNDLE p1=2`, so both sides of a comparison derive the words instead of
   trusting them. See docs/protocol.md, "The provenance chain", and
   docs/threat-model.md, "A lone chain proves nothing".
-- A copy is bound to a **bearer key**, not to a device, and a give is a **two-phase
+- A copy is bound to a **bearer key**, and nothing binds it to a device. A give is a **two-phase
   commit**: `GIVE_OFFER` atomically commits the copy to one named recipient (still
   in flash, but silent and un-offerable elsewhere), and only that recipient's
   MACed receipt makes `GIVE_FINISH` erase it. Never collapse this back into one
@@ -143,9 +154,12 @@ value fingerprints a device's key, and the label has to say so.
   purpose to prove the catch works before a sweep leans on it. Boot-checked 6x.
   Driver: `scripts/dev/factory-sweep.py`.
 - **Space is not a constraint on this app.** The per-app flash region is
-  **400 KiB** (`$FLEX_SDK/target/flex/script.ld`: `FLASH (rx) : ORIGIN =
-  0xc0de0000, LENGTH = 400K`). Today's build spans `_text` to `_nvram_end`,
-  83870 bytes, about **20%** of it, of which `.nvm_data` is 7582. Add code, grow
+  **400 KiB** (`device-app/target/flex/release/build/ledger_secure_sdk_sys-*/out/flex_layout.ld`,
+  generated in-tree so the claim is checkable without a second checkout:
+  `FLASH (rx) : ORIGIN = 0xc0de0000, LENGTH = 400K`). Today's build spans `_text`
+  to `_nvram_end`, 82846 bytes, about **20.2%** of it, of which `.nvm_data` is
+  7582. That span moves by a few hundred bytes per commit, so re-derive it off the
+  ELF rather than quoting this line. Add code, grow
   an NVM struct, cut 20 KB: none of it approaches an edge. The `data_size`
   cargo-ledger prints is `_envram_data - _nvram_data`, and `_nvram_data` sits at
   the start of `.rodata`, so that number folds read-only data into what reads
@@ -179,16 +193,18 @@ value fingerprints a device's key, and the label has to say so.
     `boottest.sh`) fails the build when `load_size % 4096 == 0`, so a binary
     that would die on someone else's stock emulator never leaves quietly.
     `ALLOW_NVM_NOTCH=1` to override.
-- **`storage_b` has never run, in any test, ever.** Even at sizes that boot,
-  stock Speculos loads only part of `.nvm_data`. When `load_size mod 4096` is
-  3584, just 4608 bytes arrive, so the second `SafeStorage` flag at offset 5376
-  reads 0 and the app runs on `storage_a` alone, with the tearing-recovery copy
-  silently absent. `install_parameters`, at offset 7168, is missing from seven
-  residues out of eight for the same reason. Everything past the boundary is
-  zero, so nothing shows. The redundancy behind "a power cut burns a number and never duplicates
-  one" has therefore never been exercised: **any test that believes it is
-  covering the B storage is currently testing nothing.** The loader patch is
-  what makes such a test possible; writing one is still open work.
+- **Nothing asserts tearing recovery from `storage_b`, and whether it is even
+  mapped depends on the build.** On a *stock* Speculos the mapping reaches
+  `4096 + ((-load_size) mod 4096)` bytes into `.nvm_data`. The second
+  `SafeStorage` flag at offset 5376 therefore arrives for five of the eight
+  512-byte residues and reads 0 for the other three; today's build maps 6656
+  bytes and has it. `install_parameters` at offset 7168 needs its whole 414
+  bytes and lands only at the top residue, so it is absent from seven builds in
+  eight. On a patched emulator, which `env.sh` re-applies on every source, the
+  whole section maps and the question does not arise. What stays open is that no
+  test exercises the B copy: the redundancy behind "a power cut burns a number
+  and never duplicates one" is unverified. Writing that test is open work, and a
+  green suite is not evidence it ran.
 - Someone will propose **emitting `DATA` first inside `.nvm_data`** as a cheaper
   fix than patching the loader. The price is high and the hazard survives it.
   The current order (`ART_MASTER`, `ART_PRESSING`, `DATA`) is chosen by compiler
