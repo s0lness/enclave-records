@@ -31,11 +31,13 @@ Streaming turned every song, book and film into a rental. This makes a digital
 work ownable again, as a numbered object with real scarcity:
 
 - **The scarcity is physical.** The edition size lives inside a tamper-resistant
-  secure element. Once an artist cuts a master of 5, even they cannot press a
-  sixth. No server enforces it; no one can quietly mint more.
-- **You hold one specific copy.** "4 of 5", bound to a key only your chip has,
+  secure element. Once an artist cuts a master of 5, this app presses 5 and
+  refuses a sixth, on the artist's own device as much as anyone's. No server
+  enforces it, and no server can be leaned on to mint more. What a *modified*
+  app does is question 5 of the FAQ.
+- **You hold one specific copy.** "4 of 5", bound to a key your chip holds,
   provable on the spot by a tap. The files can leak everywhere; being one of the
-  five cannot be copied.
+  five is a key, and a key that never leaves a secure element cannot be copied.
 - **No blockchain, no account, no server.** A copy verifies offline, forever,
   against nothing but a signature. The object outlives the company that made it:
   nothing to shut down, nothing that phones home.
@@ -43,9 +45,10 @@ work ownable again, as a numbered object with real scarcity:
   like a record or a Game Boy cartridge. The cover art travels with the
   pressing, the previous holder is named beside the device that holds it now,
   and the copy can change hands any number of times without a ledger anywhere.
-- **The copies cannot be enumerated.** Nothing lists who holds them. The
-  artist's chip keeps the count and records the devices the first copies went
-  to; past that, a copy is unknown until its holder produces it, and then it
+- **The copies cannot be enumerated.** No server and no chain lists who holds
+  them. The artist's chip keeps the count, and logs the recipient fingerprint of
+  the first 8 pressings and no more (`PRESSED_LOG_LEN`, readable only on that
+  device); past that, a copy is unknown until its holder produces it, and then it
   authenticates in seconds, offline. That is the record-shop bin: the rare
   pressing is fun *because* nobody knew it was there, and when someone comes out
   of the woodwork with a pristine #1 you can attest it on the spot. A copy does
@@ -71,9 +74,9 @@ out](docs/threat-model.md#attestation-and-why-it-is-not-implemented), for cost
 and because pinning Ledger's issuer key makes Ledger the authority on what
 counts as a genuine copy.
 
-Two things are guaranteed. The edition size: a master cut at 5 presses 5 and
-never a sixth. And a copy is never usable in two places at once while both
-devices run the honest app. If a duplicate keeps changing hands, the two
+Two things hold as long as the devices run this app, which is the same condition
+as question 5. The edition size: a master cut at 5 presses 5 and never a sixth.
+And a copy is never usable in two places at once. If a duplicate keeps changing hands, the two
 histories split at one point and name the device where the split happened,
 which is [detection
 afterwards](docs/threat-model.md#what-the-provenance-chain-adds-and-what-it-does-not).
@@ -175,8 +178,9 @@ number N of an edition of M.
 
 The master mints a fresh bearer key at each press, signs "copy N of M is bound
 to this public key" with the album key, sends the private half to the recipient
-under the paired channel, and then wipes its own copy of it. Nothing else
-records who holds what. Possession of the scalar *is* possession of the copy,
+under the paired channel, and then wipes its own copy of it. Outside the
+master's own log of its first 8 recipients, nothing records who holds what, and
+that log never leaves the device. Possession of the scalar *is* possession of the copy,
 and it is proven live: hand the device a random nonce, it signs it with the
 bearer key or it answers "no copy here".
 
@@ -386,8 +390,11 @@ On the record's `Device ID` page, beside the device that holds it now:
 - **the previous holder**, named by fingerprint. Exactly one hop, and it is the
   one hop this device can prove on its own: the giver signs a handover record
   naming both devices with its device key, and the taker stores it.
-- **a count of the holders before that**, not their names. The page is four rows
-  tall and does not scroll, and the trail is unbounded.
+- **a count of the holders before that**, not their names. The page renders two
+  tag-value pairs and does not scroll: seven lines of value in all, the last one
+  starting at y=468 before the footer takes the screen. The trail is unbounded,
+  so a line per hop would run off the bottom, and a count is the same width at
+  one hop and at a thousand.
 
 Behind the count is the **provenance chain**: one 32-byte rolling hash, rooted in
 the copy's own signed identity, into which every transfer folds the giver's
@@ -444,9 +451,10 @@ Scarcity is the whole product, and a duplicate costs more than a loss.
 Promise 1 rests on two things: the secure element genuinely erasing a key it
 reports as erased, and **two humans reading four words to each other**. Confirm
 mismatched words on both screens and the relay in the middle keeps a working copy
-of the record, permanently and undetectably. That is the only way a second copy
-can ever come into existence, and it is why the four words are the one moment
-nobody should rush.
+of the record, permanently and undetectably. That is the one failure a careful
+human can rule out on the spot, which is why the four words are the moment nobody
+should rush. The failures that no care at the ceremony can rule out are a
+modified app and a bearer key that reaches software, both in the FAQ above.
 
 Three things this does not do, by decision: it does not attest that the peer is a
 genuine Ledger (any Ledger works, and no company sits in the trust path), it does
@@ -562,7 +570,7 @@ not optional on any platform. Then:
 
 ```
 scripts/build.sh        # cargo ledger build flex, this checkout
-scripts/test.sh         # 73 tests, one or two emulated Flex
+scripts/test.sh         # 75 tests, one or two emulated Flex
 scripts/rehearse-emu.sh --auto    # cut, pair, press, verify on two emulators
 scripts/emu-up.sh       # two persistent emulators (:5001, :5002)
 scripts/cockpit.sh      # both screens + the APDU wire on :5050
@@ -610,8 +618,9 @@ cut, pair, press, offline verify, give (three-state commitment, cancel, resume),
 sleeve art sealed into the album certificate, the library, the record card and
 the sub-pages behind it (the number, the Edition ID, the Device ID with the
 provenance on it, the History that reads the chain head as eight words, and
-Learn more). 73 tests over one or two emulated Flex, and the ceremony filmed on
-two physical ones.
+Learn more). 75 tests over one or two emulated Flex. The ceremony has been run
+end to end on two physical Flex; the film of it predates the current screens and
+has to be re-shot.
 
 Not shipping, by decision: remote attestation, any backup, the witness, and the
 board of witnesses.
