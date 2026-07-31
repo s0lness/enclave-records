@@ -21,7 +21,11 @@ thesis (physical editions of digital works, no chain, no server).
 - `docs/protocol.md` - the ceremony protocol (commit-reveal ECDH pairing, SAS words,
   press certificates, wire formats, APDU map). Keep in sync with the code.
 - `docs/threat-model.md` - what the two promises rest on, every way a copy can be
-  lost, why there is no attestation, what is out of scope. The README carries only a
+  lost, why attestation is not implemented, what is out of scope. Attestation IS
+  possible on a Ledger (issuer certificate + device certificate + a scheme-1
+  signature over the running app's hash); it is declined for its cost and for
+  Ledger-as-trust-root. Never restore the claim that a Ledger app cannot prove it
+  is a Ledger. The README carries only a
   summary and links here.
 - `CEREMONIE-VIDEO.md` - runbook for the filmed ceremony on the two real Flexes
   (French), with the header table naming the build actually flashed. Driven by
