@@ -110,8 +110,8 @@ A copy is a bearer scalar. If it ever reaches software rather than a secure
 element, that software can clone it, and every clone signs the possession
 challenge and verifies as genuine. The edition stays capped -- the album key
 never leaves the master, so no new numbers -- but one of the N copies can exist
-several times. Attestation would prevent it and is
-[not available](threat-model.md#why-there-is-no-attestation-and-what-that-costs).
+several times. Attestation would prevent it and is [not
+implemented](threat-model.md#attestation-and-why-it-is-not-implemented).
 The chain is the mitigation that is available: not prevention, but **detection
 and attribution**.
 

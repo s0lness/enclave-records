@@ -293,7 +293,9 @@ comparison rather than at the door.
 
 Which is the point. A copy is a bearer key, so a copy that ever reaches software
 can be cloned, and every clone verifies as genuine; attestation would prevent
-that and is [not available](docs/threat-model.md). What the chain does is make
+that and is [not
+implemented](docs/threat-model.md#attestation-and-why-it-is-not-implemented), by
+decision. What the chain does is make
 the clones **name their maker**: two duplicates that keep circulating produce two
 histories that diverge at one link, signed by the device where the copy split.
 Duplication is proven when both branches show possession. Detection and
@@ -339,8 +341,9 @@ not back anything up (a restorable snapshot would be a rollback primitive), and
 it has no witness device (designed but not built, see below).
 
 [**docs/threat-model.md**](docs/threat-model.md) carries the case analysis: what
-each promise rests on, why a Ledger app cannot prove to a peer that it is a
-Ledger and what that costs, every way a copy can be lost with its window and its
+each promise rests on, [what attestation would have
+cost](docs/threat-model.md#attestation-and-why-it-is-not-implemented) and why it
+is not implemented, every way a copy can be lost with its window and its
 ordinary physical analogue, the interruption that costs nothing, what a copy
 reveals when it is shown, what is out of scope, and the non-goals in full.
 
@@ -386,9 +389,12 @@ capability into the project that is not there.
   destroyed at rest" and "recipient never returns" cases, and it is why App
   Storage was rejected outright: the freshness that a Ledger Live backup lacks
   is exactly what a live third party can supply.
-- **Who can serve as a witness at all.** With no attestation, a witness device
-  cannot prove it is a genuine Ledger, which is most of what you would
-  want from one. The one exception is the **artist's master**: it can prove
+- **Who can serve as a witness at all.** Attestation is not implemented here, so
+  a witness device says nothing about itself, which is most of what you would
+  want from one. Building it means pinning a Ledger issuer key, with [the
+  multi-issuer wall and the trust root that come
+  with it](docs/threat-model.md#attestation-and-why-it-is-not-implemented). The
+  one exception is the **artist's master**: it can prove
   possession of the album key that every copy's certificate is signed under, so
   it is verifiable by anybody holding a copy without any attestation at all.
   That makes the artist the natural witness for their own edition. Note that
@@ -427,8 +433,8 @@ capability into the project that is not there.
 - `docs/protocol.md` - wire formats, APDU map, state machine, per-attack test
   status. The implementer's document.
 - `docs/threat-model.md` - the two promises and which one is sacrificed, what the
-  security rests on, why there is no attestation, how a copy can be lost, what is
-  out of scope.
+  security rests on, why attestation is not implemented, how a copy can be lost,
+  what is out of scope.
 - `CEREMONIE-VIDEO.md` - the filmed-ceremony runbook for two physical Flex
   (French), including what to point the camera at.
 

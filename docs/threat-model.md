@@ -90,8 +90,9 @@ both accepted openly:
   for a copy it holds. The signatures give the attribution; possession gives the
   proof.
 
-This is the same posture v1 already takes on over-pressing: with no attestation
-available, the fallback is fraud evidence rather than prevention. The chain moves
+This is the same posture v1 already takes on over-pressing, where [attestation is
+not implemented](#attestation-and-why-it-is-not-implemented) and the fallback is
+fraud evidence after the fact. The chain moves
 duplication from "permanent, undetectable, and indistinguishable from the real
 one" to "detectable the moment two histories of one copy are put side by side,
 and attributable to the device where they split". A transparency log of witnesses
@@ -189,44 +190,85 @@ is offered no such page: it is never handed on, its head stays at the all-zero
 sentinel, and eight words derived from that would read identically on every
 device ever made.
 
-## Why there is no attestation, and what that costs
+## Attestation, and why it is not implemented
 
 The gap: nothing proves to a peer that the device across the cable is a genuine
 Ledger running this unmodified app. A collector's Flex will happily verify a
 certificate chain minted by a laptop pretending to be a master, and a
 *modified* app could in principle press a sixth copy of an edition of five.
 
-A Ledger app cannot do it, and the honest version of it would have changed what
-the project is:
+**The mechanism exists and works.** A Ledger app can prove to a peer that it is a
+genuine Ledger running a specific binary, over three pieces: the **Issuer
+Certificate** (Ledger's issuer key over the device public key, written at the
+factory), the **Device Certificate** (the device's own key over the endorsement
+public key), and a fresh **scheme-1 signature**, which is
+`ECDSA(priv1, SHA256(message || app_code_hash))` where the hash is the *running*
+app's, from `sys_endorsement_get_code_hash`. A verifier checks the peer's
+signature against *its own* code hash, so a check that passes proves the peer
+runs an identical binary, and no hash is ever transmitted. `rsksmart/rsk-powhsm`
+ships a production instance of exactly this chain, and no Ledger service is
+involved at any point.
 
-- **A Ledger app cannot prove to a peer that it is a Ledger.** The endorsement
-  mechanism (two slots, `ENDORSEMENT_SLOT_1` and `_2`) gives an app a key it can
-  sign with, but the certificate an app can read back over that key is the one
-  written by whichever host ran the provisioning. It attests to the *endorser*,
-  not to Ledger. There is no syscall at this API level that hands an app a
-  Ledger-signed device certificate to show a peer.
-- **Ledger's own endorsement path is dead.** The HSM that used to sign
-  endorsements, `hsmprod.hardwarewallet.com`, does not resolve at all (verified:
-  NXDOMAIN).
-- **Provisioning is a one-way door.** The revoke syscall is gone from the API 26
-  bindings this app builds against. Two slots, no way back: burn them wrong and
-  the device is done.
+**Correction, kept visible so nobody re-derives it.** An earlier version of this
+section claimed a Ledger app cannot prove it is a Ledger, and blamed the dead
+HSM at `hsmprod.hardwarewallet.com` plus a withdrawn revoke syscall. All three
+are wrong. The call that reads back a certificate written by whichever host ran
+the provisioning is `sys_endorsement_get_public_key_signature`, which returns
+the **Owner Certificate**: unvalidated host bytes written verbatim at
+`INS_ENDORSE_SET_COMMIT`, proving nothing at all. Generalising that one call to
+the whole mechanism was the root error. The dead HSM sits nowhere in the chain
+above. No endorsement revoke syscall has ever existed at any API level, and the
+one-way property comes from the OS refusing to overwrite a slot already set,
+which a full device wipe very likely frees (`bolos_erase_all` is closed source,
+so that last point is inference). The same section concluded that the strongest
+available claim would have forced Enclave to provision and ship every device;
+peer-to-peer attestation drops that requirement, since any two devices check
+each other.
 
-So the strongest true claim available was "attested by Enclave Records, which
-checked this device's Ledger certificate at press time" (option A), and it comes
-with a business model attached: Enclave would have to be the party that
-provisions and ships the device with the record on it, because that check can
-only happen while Enclave physically holds it. No buying your own Flex and
-receiving a copy onto it.
+**Why it is not implemented here:** cost, and three obstacles, heaviest first.
 
-**The choice made here was option B: any Ledger works, and the four words remain
-the guard.** It is a priced decision. What is bought: anyone can join the edition
-with hardware they already own, and there is no company in the trust path, which
-is the point of the object outliving the company. What is
-paid: a modified app is not detectable by a peer, and the fallback against
-over-pressing is fraud evidence rather than prevention (two certificates bearing
-the same number are mutually incriminating, and a transparency log would make
-that instant).
+1. **The multi-issuer problem.** Ledger signs with several issuer keypairs. A
+   device announces a 4-byte signer serial at `E0 50` naming which one signed its
+   certificate, and no public tooling maps that serial to a key. ledgerblue reads
+   the serial, discards it, and ships a single hardcoded constant labelled "batch
+   1"; Ledger Live sidesteps the question by delegating the genuine check to
+   Ledger's servers. A verifier compiled with one issuer key silently rejects
+   genuine devices from other batches, with no diagnostic to hand their owners.
+   That is an availability failure with no fix available from public sources.
+2. **Ledger becomes a trust root.** Pinning an issuer key keeps verification
+   offline forever: Ledger can vanish and the check still runs. It does require
+   that Ledger was honest when it signed, and that the pinned key is the one it
+   actually used. The README sells "no blockchain, no account, no server, the
+   object outlives the company that made it", and a pinned issuer key puts a
+   company back into that sentence. This is the real argument for the decision
+   below.
+3. **None of it can be exercised in Speculos.** The emulator implements neither
+   scheme 2 nor `key1_get_app_secret` nor `get_metadata`, returns `0` (which
+   reads as success) for the syscalls it does not implement while leaving the
+   output buffer untouched, and hands out a constant fake code hash. The one
+   thing attestation asserts, the identity of the running binary, is the one
+   thing the emulator fakes. Development and testing would both happen on
+   hardware or nowhere.
+
+**And the bill, once those are cleared.** Two endorsement slots per device,
+ever. Provisioning is one-way for as long as the device is not wiped, so a slot
+burned wrong is spent. And the Device Certificate is returned exactly once, in
+the response to `INS_ENDORSE_SET_START` (0xC0), and the OS never stores it:
+capture it at provisioning and carry it beside the device, or that device can
+never attest. The Issuer Certificate is out of an app's reach as well: a *host*
+reads it over dashboard APDU `E0 52` inside an SCP session, which anyone can
+open with a throwaway self-signed root and one confirmation on the device, with
+no Ledger credential anywhere. Both certificates are public and self-verifying,
+so a hostile relay can carry them safely.
+
+**The decision: any Ledger works, and the four words remain the guard.** It is a
+priced decision. What is bought: anyone can join the edition with hardware they
+already own, no owner of a genuine Flex is turned away because their batch is
+unknown, and no company sits in the trust path, which is the point of an object
+that outlives the company that made it. What is paid: a modified app is
+undetectable by its peer, and the guard against over-pressing is fraud evidence
+after the fact (two certificates bearing the same number are mutually
+incriminating, and a transparency log would make that instant).
 
 ## How a copy can be lost
 
