@@ -140,7 +140,7 @@ The Great Gatsby is about 47,000 words, roughly 280 KB. It fits, with about
 The body font `INTER_REGULAR_28px` has `line_height` 36 (measured, decoded from
 `libnbgl_shared_screenshots_flex.a`; the name understates it). The header rule
 sits at y=96 and the footer rule at y=504, leaving 408 px, of which NBGL's list
-item spends 52 px on padding, so 356 px of text: **9 lines** (derived from SDK
+item spends 56 px on padding, so 352 px of text: **9 lines** (derived from SDK
 constants, see `docs/reader.md` section 3.2, and untested on a screen).
 
 Nine lines is about 300 characters, roughly 52 words. Gatsby lands at **850 to
